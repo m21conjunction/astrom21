@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Astronomy Sub Analyser</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app">
+      <header class="app-header">
+        <img class="app-logo" src="./assets/logo-moon-conjunction.png" alt="Moon Conjunction logo">
+        <div class="brand-block">
+          <p class="app-kicker">Local frame review</p>
+          <h1>Astronomy Sub Analyser</h1>
+        </div>
+        <div class="header-status">
+          <span>v0.2.0</span>
+          <span>On-premise</span>
+          <span>FITS</span>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <div class="toolbar-group">
+          <label class="input-label" for="folderInput">Image Folders</label>
+          <div class="folder-picker">
+            <input id="folderInput" class="folder-input" type="file" accept="image/*,.tif,.tiff,.fit,.fits,.fts" multiple webkitdirectory directory>
+            <label class="folder-picker-button" for="folderInput">Add Folder</label>
+            <button id="clearFoldersBtn" class="folder-clear-button" type="button" disabled>Clear Folders</button>
+            <span class="folder-file-count" id="folderFileCount">No folders selected</span>
+          </div>
+          <div class="selected-folder-list" id="selectedFolderList" aria-label="Selected folders" hidden></div>
+        </div>
+        <div class="toolbar-group sliders">
+          <div class="control-label-line">
+            <label for="sharpnessWeight">Sharpness <span id="sharpnessWeightValue">40%</span></label>
+            <button class="help-button" type="button" aria-label="Sharpness calculation" data-help="Sharpness is relative to the current filter group. FITS files are measured from linear FITS data, not the stretched preview. Star sharpness blends FWHM and HFR, rewarding smaller/tighter stars. Hybrid adds 25% whole-image edge contrast.">?</button>
+          </div>
+          <input id="sharpnessWeight" type="range" min="10" max="60" value="40">
+          <div class="mode-control">
+            <div class="control-label-line">
+              <span class="mode-label">Sharpness Mode</span>
+              <button class="help-button" type="button" aria-label="Hybrid and FWHM mode calculation" data-help="Hybrid is usually steadier because it uses star FWHM/HFR plus image edge contrast. FWHM Only ignores global edge contrast and ranks sharpness only from measured star size.">?</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Sharpness mode">
+              <input id="sharpnessModeHybrid" type="radio" name="sharpnessMode" value="hybrid" checked>
+              <label for="sharpnessModeHybrid">Hybrid</label>
+              <input id="sharpnessModeFwhm" type="radio" name="sharpnessMode" value="fwhm">
+              <label for="sharpnessModeFwhm">FWHM Only</label>
+            </div>
+          </div>
+          <div class="control-label-line">
+            <label for="noiseWeight">Noise Penalty <span id="noiseWeightValue">15%</span></label>
+            <button class="help-button" type="button" aria-label="Noise penalty calculation" data-help="Noise is estimated from dim, non-star background pixels by comparing each pixel to its local 3x3 neighbourhood. More background residual lowers the final quality score.">?</button>
+          </div>
+          <input id="noiseWeight" type="range" min="5" max="60" value="15">
+          <div class="control-label-line">
+            <label for="starsWeight">Roundness <span id="starsWeightValue">20%</span></label>
+            <button class="help-button" type="button" aria-label="Roundness calculation" data-help="Roundness is scored directly: 100% means circular stars. It uses all detected stars and blends 75% FWHM minor/major ratio with 25% moment-based shape.">?</button>
+          </div>
+          <input id="starsWeight" type="range" min="10" max="60" value="20">
+          <div class="control-label-line">
+            <label for="starCountWeight">Star Count <span id="starCountWeightValue">15%</span></label>
+            <button class="help-button" type="button" aria-label="Star count calculation" data-help="Star Count compares each image against the current filter group. If a sub has many fewer detected stars than same-filter frames, it loses score, which helps catch clouds, haze, fog, or dawn glow.">?</button>
+          </div>
+          <input id="starCountWeight" type="range" min="0" max="40" value="15">
+          <div class="control-label-line">
+            <label for="clipWeight">Clipping Penalty <span id="clipWeightValue">10%</span></label>
+            <button class="help-button" type="button" aria-label="Clipping penalty calculation" data-help="Clipping uses hard-clipped pixels plus near-saturated highlights. FITS clipping is measured from full-resolution linear data before preview downsampling. Small saturated star cores can now reduce this score.">?</button>
+          </div>
+          <input id="clipWeight" type="range" min="5" max="40" value="10">
+          <label for="previewStretch">Preview Stretch <span id="previewStretchValue">25%</span></label>
+          <input id="previewStretch" type="range" min="0" max="100" value="25">
+        </div>
+        <div class="toolbar-group actions">
+          <div class="mode-control analysis-mode-control">
+            <div class="control-label-line">
+              <span class="mode-label">Analysis Mode</span>
+              <button class="help-button" type="button" aria-label="Analysis mode calculation depth" data-help="Standard keeps the current faster analysis. Expert uses larger working frames and heavier sampling for star size, roundness, drift, clouds, flats, and histograms. Switching modes re-measures frames on the next Analyse run.">?</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Analysis mode">
+              <input id="analysisModeStandard" type="radio" name="analysisMode" value="standard" checked>
+              <label for="analysisModeStandard">Standard</label>
+              <input id="analysisModeExpert" type="radio" name="analysisMode" value="expert">
+              <label for="analysisModeExpert">Expert</label>
+            </div>
+          </div>
+          <button id="analyzeBtn" type="button">Analyse</button>
+          <button id="stopAnalyzeBtn" class="stop-analysis-button" type="button" hidden disabled>Stop Analysis</button>
+          <button id="resetDefaultsBtn" type="button">Default Percentages</button>
+          <label class="toolbar-check" for="haloPenaltyCheckbox">
+            <input id="haloPenaltyCheckbox" type="checkbox">
+            <span>Penalise Halo</span>
+          </label>
+          <label class="export-option" for="csvSeparator">
+            <span>CSV Separator</span>
+            <select id="csvSeparator" class="csv-separator-select">
+              <option value="comma">Comma (,)</option>
+              <option value="semicolon">Semicolon (;)</option>
+              <option value="tab">Tab</option>
+              <option value="pipe">Pipe (|)</option>
+            </select>
+          </label>
+          <button id="exportBtn" type="button" disabled>Export CSV</button>
+        </div>
+      </section>
+
+      <section class="summary" id="summary">
+        <p>Select one or more folders and click Analyse.</p>
+      </section>
+
+      <section class="filter-panel" id="filterPanel" hidden>
+        <div class="filter-panel-header">
+          <div>
+            <p class="section-label">Frame Types</p>
+            <div class="filter-tabs" id="frameTypeTabs" role="tablist" aria-label="Frame type groups"></div>
+          </div>
+          <p class="filter-warning" id="filterWarning"></p>
+        </div>
+        <div>
+          <p class="section-label">Filters</p>
+          <div class="filter-tabs" id="filterTabs" role="tablist" aria-label="Filter groups"></div>
+        </div>
+        <div id="objectShotGroup" hidden>
+          <p class="section-label">Object Shots</p>
+          <div class="filter-tabs" id="objectShotTabs" role="tablist" aria-label="Object shot groups"></div>
+        </div>
+        <div>
+          <p class="section-label">Result Groups</p>
+          <div class="filter-tabs" id="recommendationTabs" role="tablist" aria-label="Recommendation groups"></div>
+        </div>
+        <div>
+          <p class="section-label">Keeper Thresholds By Filter</p>
+          <div class="threshold-grid" id="filterThresholds" aria-label="Keeper thresholds by filter"></div>
+        </div>
+      </section>
+
+      <section class="calibration-report" id="calibrationReport" hidden></section>
+
+      <section class="selection-tools">
+        <div class="selection-actions">
+          <label class="select-all-control">
+            <input id="selectAllCheckbox" type="checkbox" aria-label="Select all analysed images">
+            <span>Select All</span>
+          </label>
+          <label class="select-all-control">
+            <input id="copyByFilterCheckbox" type="checkbox" aria-label="Copy selected images into filter folders">
+            <span>Copy by Filter</span>
+          </label>
+          <label class="select-all-control">
+            <input id="copyByTypeCheckbox" type="checkbox" aria-label="Copy selected images into frame type folders">
+            <span>Copy by Type</span>
+          </label>
+          <button id="chooseOutputBtn" type="button">Choose Output Folder</button>
+          <button id="selectKeepBtn" type="button" disabled>Select Keepers</button>
+          <button id="clearSelectionBtn" type="button" disabled>Clear Selection</button>
+          <button id="sendSelectedBtn" type="button" disabled>Send Selected</button>
+        </div>
+        <p class="output-label" id="outputLabel">Output folder: not selected</p>
+      </section>
+
+      <section class="results">
+        <div class="results-grid" id="resultsBody" aria-label="Analysed images"></div>
+      </section>
+    </main>
+
+    <div class="zoom-overlay" id="zoomOverlay" hidden>
+      <section class="zoom-dialog" role="dialog" aria-modal="true" aria-labelledby="zoomTitle">
+        <div class="zoom-topbar">
+          <div class="zoom-title-block">
+            <p class="zoom-title" id="zoomTitle"></p>
+            <p class="zoom-status" id="zoomStatus"></p>
+          </div>
+          <label class="zoom-control" for="zoomRange">
+            <span>Zoom <span id="zoomValue">100%</span></span>
+            <input id="zoomRange" type="range" min="100" max="800" step="25" value="100">
+          </label>
+          <button id="zoomStarOverlayBtn" class="zoom-tool-button" type="button" aria-pressed="false">Stars</button>
+          <button id="zoomMagnifierBtn" class="zoom-tool-button" type="button" aria-pressed="false">Magnifier</button>
+          <label class="zoom-control zoom-lens-control" for="zoomMagnifierPower">
+            <span>Lens</span>
+            <select id="zoomMagnifierPower" class="zoom-lens-select">
+              <option value="2">2x</option>
+              <option value="4" selected>4x</option>
+              <option value="8">8x</option>
+            </select>
+          </label>
+          <button id="zoomCloseBtn" type="button">Close</button>
+        </div>
+        <div class="zoom-stage">
+          <img class="zoom-image fit" id="zoomImage" alt="">
+          <canvas class="zoom-star-overlay" id="zoomStarOverlay" aria-hidden="true"></canvas>
+          <div class="zoom-lens" id="zoomLens" hidden></div>
+        </div>
+        <div class="zoom-metrics" id="zoomMetrics"></div>
+      </section>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>

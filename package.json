@@ -1,0 +1,44 @@
+{
+  "name": "astro-sub-analyser",
+  "productName": "Astronomy Sub Analyser",
+  "version": "0.2.0",
+  "description": "Offline astronomy frame analysis and selection tool.",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.moonconjunction.astrosubanalyser",
+    "productName": "Astronomy Sub Analyser",
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "assets/**/*",
+      "electron/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.photography",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Graphics"
+    }
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest"
+  }
+}
