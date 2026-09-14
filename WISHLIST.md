@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-08-21
-Current app version: 0.2.0
+Updated: 2026-09-14
+Current app version: 0.3.5
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -16,11 +16,11 @@ Best options:
 
 2. **Single-Pass FITS Analysis**
    While reading the FITS pixels, compute mean, clipping, near-saturation, histogram, hot/dark outliers, and tile summaries together instead of scanning the image several times.
-   Status: open.
+   Status: partially implemented in v0.3.0 for mean, standard deviation, hard clipping, and near-saturation during FITS pixel decoding. Histogram, tile summaries, and calibration outlier passes remain possible future optimisations.
 
 3. **Full-Res Star Detection, Small-Window Measurement**
    Scan full-res for star candidates, but only compute FWHM/HFR/roundness inside small windows around stars. That gives full-res star metrics without doing expensive math everywhere.
-   Status: paused/open. A first FITS full-resolution attempt was rolled back because it changed the score scale too much and removed keeper frames in Standard mode. Revisit later with a better calibration plan and side-by-side score comparison before enabling it again.
+   Status: implemented in v0.3.0 for FITS. Standard and Expert scan FITS star candidates on the full-resolution pixel grid, then measure FWHM/HFR/roundness in local windows. Expensive whole-frame passes are sampled instead of run densely everywhere.
 
 4. **Skip Irrelevant Work By Frame Type**
    For flats/darks/biases, skip star, halo, tracking, repeat-drift logic entirely. For lights, skip calibration-only checks.
@@ -40,7 +40,7 @@ Best options:
    Implemented as an expandable per-image breakdown showing weighted metric credits and score penalties.
 
 2. **Star Overlay In Zoom**
-   Implemented as an optional zoom overlay with detected stars, elongated/repeat markers, repeat-drift links, and clicked-star FWHM/HFR readouts.
+   Implemented as an optional zoom overlay with guide-sample stars, tracking/repeat markers, repeat-drift links, and clicked-star FWHM/HFR readouts.
 
 7. **Calibration Frame Report**
    Implemented as a calibration report panel plus expanded Flat/Dark/Bias/Dark Flat diagnostics for set consistency, median outliers, flat histogram targets, light-leak/gradient warnings, and hot-pixel or brightness outliers.
@@ -57,8 +57,14 @@ Best options:
 12. **Frame-Type Shortcuts**
    Implemented as an early analysis shortcut: Flats, Darks, Biases, and Dark Flats skip light-only star detection, FWHM/HFR star sizing, repeat-drift pairing, tracking detection, halo detection, and light-frame elongation work. They keep calibration-specific checks instead.
 
+13. **Further Full-Resolution Optimisation**
+   Implemented in v0.3.0. FITS analysis now uses the original pixel grid for measurements in both Standard and Expert. Standard keeps smaller sampling budgets for whole-frame Laplacian, local-noise, elongation, cloud, Flat, and repeat-drift work; Expert uses deeper budgets. CSV export records `calculation_version` and `analysis_pixel_source` so scoring changes can be compared between versions.
+
 18. **Large-Batch UI Refresh Optimisation**
    Implemented for post-analysis controls. Score-weight, sharpness-mode, and halo-penalty changes are debounced so a slider drag does not repeatedly rebuild the full result grid. Preview-stretch thumbnail refresh now runs in small chunks and yields to the browser between chunks.
+
+19. **Guiding / Mount / Wind Trail Detection Fix**
+   Implemented in v0.3.1 and refined through v0.3.4. Tracking detection now measures wider profiles around central big/medium guide stars and looks for many trailed stars sharing one direction. The central-field sample avoids letting telescope-dependent edge/corner aberrations drive guiding warnings. Severe non-repeat trailing receives a stronger score cap.
 
 ## Open Ideas
 
@@ -79,9 +85,6 @@ Best options:
    Detect likely sensor or optical tilt from corner-to-corner differences in star HFR/FWHM, eccentricity, and roundness, then show a preview overlay or corner map to help diagnose the field.
    Important caveat: this should be designed as a field-quality map first, not a simple "tilt detected" warning. Telescopes without a corrector, such as non-Edge Schmidt-Cassegrains or Newtonians without a coma corrector, can naturally show coma, field curvature, or edge degradation. The feature should distinguish even/radial border degradation from asymmetric corner or side degradation, and use labels such as "possible curvature/coma", "asymmetric field degradation", or "possible tilt" only when the pattern supports it.
 
-13. **Further Full-Resolution Optimisation**
-   Explore whether both Standard and Expert can avoid more downsampling without becoming painfully slow. Standard should stay fast by reducing expensive passes, using single-pass FITS statistics, local star-window measurement, and worker-friendly batching. Expert can spend more time on deeper star, flat, cloud, halo, and repeat-drift budgets. Scores should remain equivalent to the same calculation logic; optimisation should change execution speed and measurement depth, not the meaning of each score.
-
 14. **Multi-Language UI**
    Add a language selector and externalised text strings so the app can support International English, French, and other languages without touching the calculation code.
 
@@ -93,4 +96,4 @@ Best options:
 
 17. **App Versioning And Release Notes**
    Define a versioning approach before packaging: visible app version in the UI, changelog/release notes, calculation-version tracking for CSV exports, and local-settings migration when defaults or score formulas change.
-   Status: started with `0.2.0` as the current visible app/package version. A changelog and calculation-version export still need to be designed.
+   Status: started. The visible app/package version is now `0.3.5`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.

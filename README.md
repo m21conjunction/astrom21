@@ -1,6 +1,6 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.2.0**.
+Current app version: **0.3.5**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -9,25 +9,26 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Imports one or more local folders of images
 - After results exist, newly added folders are analysed incrementally; existing measurements are kept and only new frames are decoded
 - Runs heavy per-frame measurements in a local Web Worker pool when the browser supports it, with a main-thread fallback
+- Uses full-resolution FITS pixels, while keeping Standard fast with sampled expensive passes and local star-window measurements
 - Adds **Stop Analysis** for very large batches; completed frames are kept and queued/active worker jobs are cancelled
 - Scores each image using:
   - sharpness
   - noise level
   - star roundness (FWHM-based, blended with minor/major axis shape)
   - highlight clipping on light frames
-- Detects likely tracking drift from elongated stars sharing a common direction
+- Detects likely tracking drift from central big/medium stars sharing a common direction, including wider trail checks for guiding, mount, or wind movement
 - Detects repeat drift where close, repeated star peaks appear at shifted positions
-- Detects broad clouds or haze using large-scale background structure plus same-object/filter star-count loss
+- Detects broad clouds or haze using abnormal background range and large-scale structure, with star loss and mean lift as supporting evidence
 - Repeat-drift uses a bright-star pass to catch multi-copy stars even when the full-frame orientation signal is weak
 - Applies cloud and tracking penalties, with repeat-drift and cloudy frames scored much lower than ordinary marginal frames
 - Ranks images and labels each one: `Keep`, `Review`, or `Discard`
 - Lets you select analysed images and copy them to another local folder
 - Shows larger stretched previews in a result grid, with eccentricity, HFR, star count, and mean brightness under each image
 - Shows an expandable **Why this score?** breakdown under each analysed frame
-- Scores clipping from hard-clipped and near-saturated highlights, with full-resolution FITS clipping checks before downsampling
+- Scores clipping from hard-clipped and near-saturated highlights, with FITS clipping checks made during the full-resolution pixel read
 - Shows amber preview/zoom rings and a warning when broad halos are suspected around bright stars
 - Lets you adjust preview stretch after analysis and click any preview to inspect it in a higher-resolution zoom view
-- Adds zoom tools for detected-star overlays, repeat-drift markers, clicked-star FWHM/HFR readouts, and a 2x/4x/8x magnifier lens
+- Adds zoom tools for guide-star overlays, repeat-drift markers, clicked-star FWHM/HFR readouts, and a 2x/4x/8x magnifier lens
 - Detects FITS filters, shows filter tabs, and keeps the All view available
 - Detects FITS light-frame RA/DEC, groups lights by object shot, and compares light scores inside the same object shot and filter
 - Uses focal length and pixel size metadata, or WCS pixel scale when available, to derive the allowed RA/DEC deviation for object-shot grouping
@@ -45,7 +46,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Remembers the scoring and preview sliders, plus the sharpness mode, on the same browser
 - Can restore the default percentage values from the toolbar
 - Shows help markers beside the core scoring controls with calculation notes
-- Exports a CSV report with all analysis parameters
+- Exports a CSV report with all analysis parameters, including calculation version and analysis pixel source
 
 All processing happens locally on your machine. No cloud calls are used.
 
@@ -80,7 +81,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 
 - Supports common browser images (JPG/PNG/WebP/TIFF) plus FITS (`.fit`, `.fits`, `.fts`).
 - Folders can be added one after another before or after analysis. When results already exist, clicking **Analyse** processes only newly added supported frames, then refreshes scores and reports for the combined batch. The folder list shows browser-safe relative folder paths because browsers hide full disk paths.
-- **Analysis Mode** defaults to **Standard**. **Expert** mode re-measures frames with larger working images and heavier sampling for star size, roundness, repeat drift, flat artefacts, clouds, and histograms. It is slower, but better for borderline or suspicious frames.
+- **Analysis Mode** defaults to **Standard**. FITS measurements now use the full-resolution pixel array in both modes. Standard stays faster by sampling expensive whole-frame passes; Expert uses deeper sampling budgets for star size, roundness, repeat drift, flat artefacts, clouds, halos, and histograms.
 - Analysis uses a local worker pool when available. Worker count is selected automatically from detected logical CPU cores, reported/estimated memory, and the largest files in the current batch. The app normally leaves one logical core free for the UI and reduces workers when large FITS files would create memory pressure.
 - In the browser, memory detection is approximate because Safari/Firefox may not expose physical RAM. The app then uses a conservative fallback. In the Electron desktop wrapper, the app can read real local CPU and RAM values and use them for the same automatic worker choice.
 - If Web Workers are unavailable or blocked, analysis falls back to the original local single-thread path.
@@ -93,11 +94,16 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - Preview stretch is adjustable after analysis; `0%` is neutral/linear and higher values progressively lift faint detail.
 - Preview images are rendered losslessly to avoid compression blocks in the grid and zoom viewer.
 - The zoom viewer uses a higher-resolution detail render than the grid preview, up to 6000 pixels on the longest side.
-- In the zoom star overlay, teal/green circles are normal detected stars, red circles are elongated stars, yellow circles or links are repeat-drift candidates, and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. A few red stars at the edges can be normal coma or curvature; many red stars in one direction, or red stars connected by yellow repeat-drift links, is more suspicious.
+- In the zoom star overlay, teal/green circles are normal guide-sample stars, red circles are guide-sample stars supporting a `Possible` or `Severe` tracking warning, yellow circles or links are repeat-drift candidates, and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. Tiny/faint detections are not circled because they are not reliable enough for guiding diagnosis.
 - Star overlays and star/tracking/halo calculations are only used for light frames; Flats, Biases, Darks, and Dark Flats are judged with calibration-specific measures instead.
 - FITS sharpness, roundness, HFR, and clipping are scored from linear FITS data, not from the stretched preview image.
-- FITS clipping and near-saturation are measured on the full-resolution FITS data before downsampling, so small saturated star cores are not averaged away.
-- In Standard mode, large FITS frames are measured on a higher-resolution linear working image up to `3600` pixels on the longest side; in Expert mode this rises to `7000` pixels. FWHM/HFR are scaled back to original-pixel units when downsampling is used.
+- FITS clipping and near-saturation are measured on the full-resolution FITS data while the frame is decoded, so small saturated star cores are not averaged away.
+- In v0.3.0, FITS sharpness, roundness, HFR/FWHM, clipping, clouds, flats, halos, and repeat-drift work from the original FITS pixel grid. Standard and Expert differ by sampling depth and budgets, not by a smaller FITS analysis image.
+- In v0.3.1, tracking detection also measures wider profiles around the brightest stars. This catches coherent guiding/mount/wind trails when the tight star core still looks deceptively round.
+- In v0.3.2, tracking detection moved to central-field big and medium stars rather than the full field, so telescope-dependent edge/corner aberrations are less likely to be mistaken for guiding drift.
+- In v0.3.3, red star overlay circles were made stricter: red means a guide-sample star supporting a `Possible` or `Severe` tracking warning, not every mildly elongated detected star.
+- In v0.3.4, the overlay was changed to show only the guide-star sample used for tracking analysis. Tiny/faint detections are excluded from the overlay and from guiding/tracking decisions.
+- In v0.3.5, cloud detection was retrained from labelled cloudy and clear batches. Background range plus structure is now the warning gate; star-loss and mean-lift are supporting evidence.
 - Sharpness scoring blends FWHM and HFR so tight-star measurements are less fragile.
 - Star metrics use all detected stars in each image; very dense fields can take longer to analyse.
 - Star count is scored relative to the current object-shot/filter group to help catch clouds, haze, fog, or dawn reducing visible stars without comparing different targets.
@@ -113,7 +119,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - Mixed frame-type folders are grouped by type, so `Flat`, `Dark`, `Bias`, and `Dark Flat` frames are not scored as weak light frames.
 - For light frames, sharpness, noise, and star count are relative to the current object-shot/filter group; roundness and clipping use absolute scoring.
 - Light-frame clipping uses both `clipping_percent` and `near_saturation_percent`; the CSV also exports `clipping_pressure` and `clipping_score`. Calibration frames treat saturated bright pixels as calibration evidence, not as light-frame highlight clipping.
-- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when a frame has broad background structure and/or a same-object/filter star-count loss. Star-loss and mean-brightness comparisons require at least 3 light frames in the same object-shot/filter group. Unlike halo, cloud warnings always apply a quality penalty because clouds directly damage the subframe.
+- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when a frame has abnormal background range and structure. Same-object/filter star-loss and mean-brightness lift strengthen that warning, but they no longer trigger cloud warnings by themselves.
 - Halo detection compares broad annuli around bright stars with the local background. It creates `Possible Halo` or `Likely Halo` warnings and amber preview rings; the same rings appear in the zoom view when the star overlay is enabled. By default it does not change the quality score; enable **Penalise Halo** to apply score penalties.
 - Calibration report cards appear when calibration frames are present. They summarize each Flat/Dark/Bias/Dark Flat set, including frame count, set median, median range, Flat artefact mismatches, median outliers, exposure/temperature match checks, hot-pixel outliers, and gradient/light-leak warnings.
 - Default scoring weights are Sharpness `40%`, Noise `15%`, Roundness `20%`, Star Count `15%`, and Clipping `10%`.
@@ -122,6 +128,9 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - In browsers, folder-to-folder copy uses the File System Access API where available. In the Electron desktop app, folder-to-folder copy uses native filesystem access.
 - Selected files keep their relative subfolder structure when copied; enabling **Copy by Filter** and/or **Copy by Type** adds those folders above that path.
 - CSV export supports comma, semicolon, tab, and pipe separators, and remembers the selected separator in the same browser.
+- CSV rows include `calculation_version` and `analysis_pixel_source` so score changes between app versions can be compared later.
+- CSV rows also include directional-trail fields so guiding false negatives can be investigated after a batch run.
+- Light-frame cards show **Guide Stars** as `count / central radius`, showing how many reliable guide-sample stars were used for the tracking judgement.
 
 ## Filter Detection
 

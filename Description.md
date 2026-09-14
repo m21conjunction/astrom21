@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-08-21
+Updated: 2026-09-14
 
-Current app version: **0.2.0**.
+Current app version: **0.3.5**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -16,7 +16,7 @@ This document describes the current measurements, scores, and preview annotation
 - Calibration frames are checked against expected calibration-frame behaviour instead of star quality.
 - Calibration frames bypass light-only star, tracking, repeat-drift, halo, and elongation calculations.
 - Several displayed values are raw measurements, while the final quality score uses normalised versions of those measurements.
-- Analysis Mode controls how much pixel data is used for expensive measurements. Standard is the default faster path; Expert is slower and uses larger working frames and heavier sampling.
+- Analysis Mode controls how deeply expensive measurements are sampled. Standard is the default faster path; Expert is slower and uses deeper sampling budgets.
 - Per-frame measurements run in a local Web Worker pool when supported. Workers change where the calculations run, not what the calculations mean.
 
 ## Processing Path
@@ -51,36 +51,61 @@ scaled_pixel = raw_pixel * BSCALE + BZERO
 
 If a FITS `BLANK` value is present, those pixels become `NaN` and are ignored by calculations that require finite pixels.
 
-### FITS Downsampling
+While reading FITS pixels, the app also computes the basic full-frame statistics in the same pass:
 
-FITS frames can be large, so the app keeps separate working images:
+- finite pixel count
+- mean
+- standard deviation
+- hard-clipped highlight count
+- near-saturated highlight count
 
+This avoids scanning the full FITS array multiple times for those core statistics.
+
+### FITS Images, Preview, And Measurement
+
+FITS frames can be large, so the app keeps separate visual and measurement paths:
+
+- Full-resolution analysis pixels: the original FITS width and height.
 - Preview image: longest side up to `1400` pixels.
-- Standard analysis image: longest side up to `3600` pixels.
-- Expert analysis image: longest side up to `7000` pixels.
 - Zoom detail image: longest side up to `6000` pixels.
 
-FITS downsampling is done by averaging source pixels into target pixels. For star measurements, FWHM/HFR values are scaled back to original-pixel units when the FITS analysis image was downsampled.
+Preview and zoom images are downsampled only for display. FITS measurements in v0.3.0 use the full-resolution FITS pixel grid in both Standard and Expert modes.
+
+Star candidates are scanned on the full-resolution data. FWHM, HFR, roundness, and eccentricity are then measured only in small local windows around each star candidate, so the app does not run expensive star-shape maths across every pixel.
+
+Expensive whole-frame measurements such as Laplacian sharpness support, local noise, and global elongation use regular sampling steps. That keeps the calculation responsive while still sampling across the full field instead of measuring a smaller downsampled frame.
 
 ### Analysis Modes
 
 Standard mode preserves the faster current behaviour:
 
 - bitmap analysis longest side up to `1400` pixels
-- FITS analysis longest side up to `3600` pixels
+- FITS measurements use full-resolution pixels
 - distribution and Flat histogram samples up to `250000` pixels
 - cloud/Flat tile sampling target of `480` pixels per tile
+- Laplacian sharpness support sample target of `900000` pixels
+- local-noise sample target of `900000` pixels
+- global-elongation sample target of `700000` pixels
+- directional guiding/trail check on up to the brightest `1400` stars with a `10` pixel wide-profile radius
+- guiding/tracking decisions use the central `72%` field radius first, expanding only to the central `88%` radius if too few central stars are available
 - repeat-drift pairing limit of `80000` close-star pairs
 - repeat-drift bright-star subset up to `1500` stars
+- zoom guide-star overlay payload up to `2500` displayed stars
 
 Expert mode is intended for borderline or suspicious frames:
 
 - bitmap analysis longest side up to `7000` pixels
-- FITS analysis longest side up to `7000` pixels
+- FITS measurements use full-resolution pixels
 - distribution and Flat histogram samples up to `1000000` pixels
 - cloud/Flat tile sampling target of `1600` pixels per tile
+- Laplacian sharpness support sample target of `2600000` pixels
+- local-noise sample target of `2600000` pixels
+- global-elongation sample target of `2000000` pixels
+- directional guiding/trail check on up to the brightest `4200` stars with a `14` pixel wide-profile radius
+- guiding/tracking decisions use the central `72%` field radius first, expanding only to the central `88%` radius if too few central stars are available
 - repeat-drift pairing limit of `240000` close-star pairs
 - repeat-drift bright-star subset up to `5000` stars
+- zoom guide-star overlay payload up to `6000` displayed stars
 
 Switching mode does not re-score old measurements. On the next **Analyse** run, frames measured in the other mode are decoded and measured again.
 
@@ -91,7 +116,7 @@ When Web Workers are available, the app sends per-frame measurement work to a lo
 - Worker count is selected automatically for each **Analyse** run.
 - The CPU limit uses detected logical cores and normally leaves one logical core free for the UI.
 - The memory limit uses real local RAM in the Electron desktop wrapper, approximate browser memory when the browser exposes it, or a conservative fallback when memory is hidden by the browser.
-- The app also estimates per-worker memory pressure from the largest selected file. Expert mode reserves more memory per worker than Standard mode because it uses larger working frames and heavier measurements.
+- The app also estimates per-worker memory pressure from the largest selected file. Expert mode reserves more memory per worker than Standard mode because it uses deeper measurement budgets.
 
 The selected count is the lowest of the pending frame count, CPU limit, and memory limit. During analysis, the summary panel shows the auto-selected worker count and whether the memory source was desktop memory, browser memory, browser heap limit, or fallback memory estimate.
 
@@ -265,7 +290,7 @@ Star detection is used for:
 - repeat drift
 - zoom star overlay
 
-For FITS files, star detection runs on the Standard or Expert FITS analysis image. For bitmap files, star detection runs on the selected analysis canvas: up to `1400` pixels on the longest side in Standard mode and up to `7000` pixels in Expert mode.
+For FITS files, star detection runs on the full-resolution FITS pixel grid in both Standard and Expert modes. For bitmap files, star detection runs on the selected analysis canvas: up to `1400` pixels on the longest side in Standard mode and up to `7000` pixels in Expert mode.
 
 ### Detection Threshold
 
@@ -587,7 +612,7 @@ clipping_threshold = 250
 near_saturation_threshold = 245
 ```
 
-For FITS integer files, these measurements are made from the full-resolution linear FITS data before any preview or analysis downsampling. This matters because downsampling can average one saturated star core with neighbouring pixels and hide the clipping.
+For FITS integer files, these measurements are made from the full-resolution linear FITS data during pixel decoding, before any display downsampling. This matters because display downsampling can average one saturated star core with neighbouring pixels and hide the clipping.
 
 The FITS thresholds are derived from the scaled integer range:
 
@@ -645,7 +670,9 @@ Cloud detection runs for light-frame analysis, not calibration-frame checks. It 
 The app measures two kinds of evidence:
 
 1. Large-scale background structure inside the frame.
-2. Same-object and same-filter differences from the rest of the batch, especially lost stars.
+2. Same-object and same-filter differences from the rest of the batch, especially lost stars and lifted mean brightness.
+
+In v0.3.5, cloud warnings are trained from labelled cloudy and clear batches. Background range plus structure is the warning gate. Star-loss and mean-lift signals strengthen the warning only after that gate is open, because labelled clean frames can still have relative mean lift or star-count differences.
 
 ### Large-Scale Background Structure
 
@@ -714,7 +741,7 @@ cloud_mean_lift_score =
         0
 ```
 
-With only one or two light frames in an object-shot/filter group, the app cannot know whether a lower star count is real cloud loss or simply the normal value for that target/filter. In that case, relative cloud evidence is disabled and the cloud warning can only come from strong single-frame background structure.
+With only one or two light frames in an object-shot/filter group, the app cannot know whether a lower star count is real cloud loss or simply the normal value for that target/filter. In that case, relative cloud evidence is disabled and the cloud warning can only come from single-frame background range and structure.
 
 The final cloud score blends frame-internal structure with batch-relative evidence:
 
@@ -722,41 +749,65 @@ The final cloud score blends frame-internal structure with batch-relative eviden
 paired_evidence = min(cloud_structure_score, max(cloud_star_loss_score, cloud_mean_lift_score))
 
 cloud_score =
-    0.48 * cloud_structure_score +
-    0.34 * cloud_star_loss_score +
-    0.20 * cloud_mean_lift_score +
-    0.25 * paired_evidence
+    0.54 * cloud_structure_score +
+    0.18 * cloud_star_loss_score +
+    0.14 * cloud_mean_lift_score +
+    0.24 * paired_evidence
 ```
 
 The result is clamped to `0..1`.
 
-Very strong structure can raise the score floor even when the batch has no clean reference frame:
+The labelled batches showed that `cloud_background_range_percent` and `cloud_structure_score` separated cloudy and clear frames more reliably than star count alone. The current threshold gate is:
 
 ```text
-if cloud_structure_score >= 0.82 and cloud_background_range_percent >= 22:
+range_structure_possible =
+    cloud_background_range_percent >= 4.3
+    and cloud_structure_score >= 0.03
+
+range_structure_likely =
+    cloud_background_range_percent >= 6.5
+    and cloud_structure_score >= 0.16
+
+support_evidence =
+    cloud_star_loss_score >= 0.15
+    or cloud_mean_lift_score >= 0.35
+
+strong_support_evidence =
+    cloud_star_loss_score >= 0.30
+    or cloud_mean_lift_score >= 0.55
+```
+
+These gates raise the displayed cloud score floor:
+
+```text
+if range_structure_likely:
     cloud_score = max(cloud_score, 0.72)
-else if cloud_structure_score >= 0.62 and cloud_background_range_percent >= 14:
-    cloud_score = max(cloud_score, 0.46)
+    if support_evidence:
+        cloud_score = max(cloud_score, 0.78)
+else if range_structure_possible:
+    cloud_score = max(cloud_score, 0.44)
+    if support_evidence:
+        cloud_score = max(cloud_score, 0.52)
+    if strong_support_evidence:
+        cloud_score = max(cloud_score, 0.62)
 ```
 
 Warning levels:
 
 ```text
 Likely Cloud if:
-    cloud_score >= 0.70
-    and (
-        cloud_star_loss_score >= 0.18 and cloud_structure_score >= 0.32
-        or cloud_mean_lift_score >= 0.62
-        or cloud_structure_score >= 0.82 and cloud_background_range_percent >= 22
+    range_structure_likely
+    or (
+        range_structure_possible
+        and strong_support_evidence
+        and (
+            cloud_background_range_percent >= 4.8
+            or cloud_structure_score >= 0.06
+        )
     )
 
 Possible Cloud if:
-    cloud_score >= 0.43
-    and (
-        cloud_star_loss_score >= 0.10 and cloud_structure_score >= 0.25
-        or cloud_mean_lift_score >= 0.42
-        or cloud_structure_score >= 0.62 and cloud_background_range_percent >= 14
-    )
+    range_structure_possible
 ```
 
 Cloud penalties applied to light-frame quality:
@@ -920,7 +971,20 @@ elongation < 2.2
 
 This is internal, not directly exported.
 
-The app identifies elongated stars:
+The app identifies elongated stars from the tracking star sample. The tracking sample uses central-field big and medium stars so telescope-dependent edge/corner aberrations do not dominate the guiding judgement.
+
+The primary tracking region is the central `72%` field radius. If that gives too few stars, the app expands only to the central `88%` radius. It does not use the full field for tracking severity, because outer-field star shape can depend strongly on telescope design, reducers, flatteners, collimation, and correctors.
+
+The tracking sample is selected as follows:
+
+- keep only stars with finite position, finite peak brightness, and valid HFR
+- keep the central `72%` field-radius stars first
+- keep stars with `HFR >= 0.85 px`
+- when enough stars are available, also remove the smallest `20%` by HFR
+- keep stars at or above the `50th` percentile of peak brightness inside that central sample, which removes faint detections while keeping bright and medium stars
+- if fewer than `12` stars remain, relax the brightness cut to the `18th` percentile
+- if fewer than `12` stars are available in the central `72%` radius, repeat the same process only inside the central `88%` radius
+- if more stars remain than the mode budget allows, sample across the bright-to-medium range instead of using only the brightest stars
 
 ```text
 axis_ratio > 1.2
@@ -928,7 +992,7 @@ axis_ratio > 1.2
 
 It then measures:
 
-- `elongated_fraction`: fraction of detected stars that are elongated.
+- `elongated_fraction`: fraction of tracking-sample guide stars that are elongated.
 - `mean_axis_ratio`: average axis ratio of elongated stars.
 - `orientation_coherence`: how similarly those stars are oriented.
 
@@ -947,10 +1011,56 @@ shape_factor = clamp((mean_axis_ratio - 1) / 1.4, 0, 1)
 trailing_score = elongated_fraction * orientation_coherence * shape_factor
 ```
 
+### Directional Trail Score
+
+CSV fields:
+
+- `directional_trail_score`
+- `directional_trail_star_fraction`
+- `directional_trail_star_count`
+
+This v0.3.1 check catches guiding, mount, or wind movement that can be missed by the tight FWHM/core measurement.
+
+In v0.3.2 and later, this check is central-field based to reduce bias from telescope-dependent edge/corner aberrations.
+
+For each star in the tracking sample, the app measures a wider local profile around the star. It uses a low local floor above the background, computes a weighted second-moment ellipse, and records:
+
+- wide-profile axis ratio
+- wide-profile major/minor size
+- wide-profile angle
+
+Then it counts stars that look genuinely trailed:
+
+```text
+wide_axis_ratio > 1.32
+wide_major_size > max(2.8 px, wide_minor_size * 1.28)
+wide_major_size - wide_minor_size > 0.85 px
+```
+
+Those trailed stars must also point in a common direction. The score rises when many bright stars have the same wide-profile angle:
+
+```text
+count_score = clamp((trailed_star_count - 6) / 44, 0, 1)
+fraction_score = clamp((trailed_star_fraction - 0.025) / 0.18, 0, 1)
+shape_score = clamp((mean_wide_axis_ratio - 1.22) / 1.15, 0, 1)
+
+directional_trail_score =
+    (0.5 * count_score + 0.5 * fraction_score) *
+    orientation_coherence *
+    shape_score
+```
+
+The final trailing score used by tracking is:
+
+```text
+trailing_score = max(core_trailing_score, directional_trail_score)
+```
+
 Interpretation:
 
 - A few elongated stars with random directions do not score high.
 - Many elongated stars sharing a direction score higher.
+- A field-wide diagonal smear, such as guiding error, mount movement, or wind shake, should now be detected even when the tight star core still looks acceptable.
 
 ### Repeat Drift
 
@@ -966,7 +1076,7 @@ Repeat drift is intended to detect multiple nearby copies of the same star, whic
 The app looks for pairs of stars that are:
 
 ```text
-distance between 1.2 and 9.5 pixels, scaled for FITS analysis size
+distance between 1.2 and 9.5 pixels, scaled to the measurement pixel grid
 brightness ratio <= 3.2
 ```
 
@@ -1023,6 +1133,8 @@ tracking_score = clamp(
 )
 ```
 
+`trailing_score` is the stronger of the old tight-core trailing signal and the v0.3.1 wide-profile directional trail signal.
+
 The extra `min(...)` term increases the score when both trailing and repeat drift appear together.
 
 ### Tracking Severity And Reason
@@ -1034,7 +1146,7 @@ CSV fields:
 
 Displayed as `Tracking`.
 
-If fewer than `12` stars are detected:
+If fewer than `12` central tracking-sample stars are available:
 
 ```text
 tracking_severity = "Low confidence"
@@ -1094,12 +1206,14 @@ Severe repeat drift or severe mixed drift:
     quality *= 0.38
     final quality is capped at 28
 Severe trailing only:
-    quality *= 0.68
+    quality *= 0.45
+    final quality is capped at 48
 Possible repeat drift or possible mixed drift:
     quality *= 0.55
     final quality is capped at 40
 Possible trailing only:
-    quality *= 0.82
+    quality *= 0.68
+    final quality is capped at 65
 ```
 
 The cap is applied after the multiplier. Repeat-drift penalties are intentionally stronger than ordinary trailing penalties because repeated nearby copies of stars usually damage the sub even when sharpness, HFR, or star count still look acceptable.
@@ -1937,7 +2051,7 @@ field_width_degrees = pixel_scale_arcsec_per_pixel * image_width_pixels / 3600
 field_height_degrees = pixel_scale_arcsec_per_pixel * image_height_pixels / 3600
 ```
 
-For FITS files, the original FITS dimensions are used for this field-of-view calculation, not the downsampled analysis image.
+For FITS files, the original FITS dimensions are used for this field-of-view calculation.
 
 ### Object-Shot Tolerance
 
@@ -2090,23 +2204,30 @@ If FITS metadata is missing, the app falls back to file and folder names. It rec
 
 The sensor model currently affects Dark and Dark Flat outlier scoring only. Known low-glow back-illuminated sensors use the `Low-glow BSI` profile; all other or unknown models use the `Generic sensor` profile.
 
-## Zoom Star Overlay
+## Zoom Guide-Star Overlay
 
-For light frames, the zoom overlay uses the same detected-star measurements that were used for scoring. Calibration frames disable this overlay because detected peaks in Flats, Darks, Biases, and Dark Flats are not stars.
+For light frames, the zoom overlay shows the guide-star sample used for tracking analysis, not every detected star. Calibration frames disable this overlay because detected peaks in Flats, Darks, Biases, and Dark Flats are not stars.
+
+Very small or faint detections are excluded from this overlay because their shapes are not reliable enough for guiding diagnosis. They can still contribute to the raw detected star count, but they are not used for tracking/trailing/repeat-drift decisions.
 
 Overlay colours:
 
-- Teal/green circles: normal detected stars.
-- Red circles: elongated stars.
+- Teal/green circles: normal guide-sample stars.
+- Red circles: guide-sample stars that support a `Possible` or `Severe` tracking warning.
 - Yellow circles or links: repeat-drift candidates.
 - White circle: clicked star.
 
-A star is marked red when:
+A star is marked red only if the frame has a `Possible` or `Severe` tracking warning, the star belongs to the guide-star sample, and one of these stronger local shape rules is true:
 
 ```text
-axis_ratio > 1.25
-or
-roundness < 0.78
+directional-trail shape:
+    trail_axis_ratio > 1.32
+    trail_major_fwhm > max(2.8 px, trail_minor_fwhm * 1.28)
+    trail_major_fwhm - trail_minor_fwhm > 0.85 px
+
+or strong core elongation:
+    axis_ratio > 1.55
+    roundness < 0.68
 ```
 
 Clicking a star in the zoom overlay shows:
@@ -2115,7 +2236,7 @@ Clicking a star in the zoom overlay shows:
 - minor/major FWHM
 - roundness
 
-Important note: red stars are not automatically bad. Some red edge stars can be normal coma, field curvature, or missing corrector behaviour. The suspicious cases are many red stars in a shared direction, or red stars connected by yellow repeat-drift links.
+Important note: red stars are not automatically bad, but red is now reserved for real tracking-alert context. In v0.3.4, mild elongation, tiny stars, and telescope-dependent edge/corner effects are deliberately kept out of the warning overlay because they can still produce a decent frame. The suspicious cases are many red guide stars sharing a direction, or red stars connected by yellow repeat-drift links.
 
 ## CSV Columns
 
@@ -2123,7 +2244,9 @@ The CSV export includes these fields:
 
 ```text
 file
+calculation_version
 analysis_mode
+analysis_pixel_source
 frame_type
 frame_type_source
 filter
@@ -2135,6 +2258,29 @@ temperature_source
 camera_model
 camera_model_source
 sensor_outlier_profile
+target_name
+target_source
+object_shot
+object_shot_key
+object_shot_frame_count
+object_shot_offset_arcmin
+object_shot_tolerance_arcmin
+ra_degrees
+ra_hms
+ra_source
+dec_degrees
+dec_dms
+dec_source
+focal_length_mm
+focal_length_source
+pixel_size_microns
+pixel_size_source
+binning
+binning_source
+pixel_scale_arcsec_per_pixel
+pixel_scale_source
+field_width_degrees
+field_height_degrees
 keeper_threshold
 quality
 recommendation
@@ -2192,6 +2338,11 @@ halo_penalty_applied
 tracking_severity
 tracking_reason
 tracking_score
+tracking_sample_star_count
+tracking_sample_region
+directional_trail_score
+directional_trail_star_fraction
+directional_trail_star_count
 repeat_drift_source
 repeat_drift_score
 repeated_star_fraction
@@ -2202,7 +2353,9 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
+- `calculation_version`: app/calculation version that produced this row, such as `0.3.5`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
+- `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS` or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
 - `frame_type_source`: FITS keyword or file path source.
 - `filter`: detected filter group.
@@ -2294,7 +2447,12 @@ Short meanings:
 - `tracking_severity`: None, Possible, Severe, or Low confidence.
 - `tracking_reason`: None, Trailing, Repeat drift, Trailing + Repeat drift, or Low confidence.
 - `tracking_score`: combined trailing/repeat tracking score.
-- `repeat_drift_source`: all-stars or bright-stars.
+- `tracking_sample_star_count`: number of central big/medium stars used for guiding/tracking decisions.
+- `tracking_sample_region`: central field radius used for guiding/tracking decisions, normally `central 72% radius` or fallback `central 88% radius`.
+- `directional_trail_score`: 0 to 1 wide-profile common-direction trail score for guiding/mount/wind movement.
+- `directional_trail_star_fraction`: fraction of wide-profile tracking stars that looked trailed.
+- `directional_trail_star_count`: count of wide-profile tracking stars that looked trailed.
+- `repeat_drift_source`: central-stars or central-bright-stars.
 - `repeat_drift_score`: aligned close-repeat score.
 - `repeated_star_fraction`: fraction of stars with at least one aligned repeat neighbour.
 - `multi_repeat_fraction`: fraction of stars with multiple aligned repeat neighbours.

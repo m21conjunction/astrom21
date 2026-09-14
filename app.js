@@ -93,6 +93,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
+const appVersion = "0.3.5";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -258,39 +259,68 @@ const defaultScoreSettings = {
 const imageExtensions = new Set(["jpg", "jpeg", "png", "bmp", "gif", "webp", "tif", "tiff"]);
 const fitsExtensions = new Set(["fit", "fits", "fts"]);
 const previewMaxDimension = 1400;
-const fitsAnalysisMaxDimension = 3600;
 const bitmapAnalysisMaxDimension = 1400;
 const standardDistributionMaxSamples = 250000;
 const standardCloudTileSamples = 480;
+const standardLaplacianSampleTarget = 900000;
+const standardNoiseSampleTarget = 900000;
+const standardElongationSampleTarget = 700000;
+const standardTrackingTrailStarLimit = 1400;
+const standardTrackingTrailWindowRadius = 10;
 const standardRepeatDriftMaxPairs = 80000;
 const standardRepeatDriftBrightStarLimit = 1500;
+const standardStarOverlayLimit = 2500;
+const trackingCentralFieldRadius = 0.72;
+const trackingFallbackCentralFieldRadius = 0.88;
+const trackingMinimumCentralStars = 12;
+const trackingMediumPeakPercentile = 0.5;
+const trackingMinimumGuideStarHfrPx = 0.85;
+const trackingGuideStarHfrPercentile = 0.2;
 const expertAnalysisMaxDimension = 7000;
 const expertDistributionMaxSamples = 1000000;
 const expertCloudTileSamples = 1600;
+const expertLaplacianSampleTarget = 2600000;
+const expertNoiseSampleTarget = 2600000;
+const expertElongationSampleTarget = 2000000;
+const expertTrackingTrailStarLimit = 4200;
+const expertTrackingTrailWindowRadius = 14;
 const expertRepeatDriftMaxPairs = 240000;
 const expertRepeatDriftBrightStarLimit = 5000;
+const expertStarOverlayLimit = 6000;
 const analysisModeConfigs = {
   standard: {
     key: "standard",
     label: "Standard",
     bitmapAnalysisMaxDimension,
-    fitsAnalysisMaxDimension,
+    fitsFullResolution: true,
     distributionMaxSamples: standardDistributionMaxSamples,
     histogramMaxSamples: standardDistributionMaxSamples,
     cloudTileSamples: standardCloudTileSamples,
+    laplacianSampleTarget: standardLaplacianSampleTarget,
+    noiseSampleTarget: standardNoiseSampleTarget,
+    elongationSampleTarget: standardElongationSampleTarget,
+    trackingTrailStarLimit: standardTrackingTrailStarLimit,
+    trackingTrailWindowRadius: standardTrackingTrailWindowRadius,
     repeatDriftMaxPairs: standardRepeatDriftMaxPairs,
-    repeatDriftBrightStarLimit: standardRepeatDriftBrightStarLimit
+    repeatDriftBrightStarLimit: standardRepeatDriftBrightStarLimit,
+    starOverlayLimit: standardStarOverlayLimit
   },
   expert: {
     key: "expert",
     label: "Expert",
     bitmapAnalysisMaxDimension: expertAnalysisMaxDimension,
-    fitsAnalysisMaxDimension: expertAnalysisMaxDimension,
+    fitsFullResolution: true,
     distributionMaxSamples: expertDistributionMaxSamples,
     histogramMaxSamples: expertDistributionMaxSamples,
     cloudTileSamples: expertCloudTileSamples,
+    laplacianSampleTarget: expertLaplacianSampleTarget,
+    noiseSampleTarget: expertNoiseSampleTarget,
+    elongationSampleTarget: expertElongationSampleTarget,
+    trackingTrailStarLimit: expertTrackingTrailStarLimit,
+    trackingTrailWindowRadius: expertTrackingTrailWindowRadius,
     repeatDriftMaxPairs: expertRepeatDriftMaxPairs,
-    repeatDriftBrightStarLimit: expertRepeatDriftBrightStarLimit
+    repeatDriftBrightStarLimit: expertRepeatDriftBrightStarLimit,
+    starOverlayLimit: expertStarOverlayLimit
   }
 };
 const bytesPerGib = 1024 * 1024 * 1024;
@@ -316,6 +346,14 @@ const hardClippingFullPenaltyPercent = 0.01;
 const nearSaturationFullPenaltyPercent = 0.1;
 const nearSaturationPressureWeight = 0.8;
 const cloudRelativePeerMinimum = 3;
+const cloudPossibleBackgroundRangePercent = 4.3;
+const cloudPossibleStructureScore = 0.03;
+const cloudLikelyBackgroundRangePercent = 6.5;
+const cloudLikelyStructureScore = 0.16;
+const cloudSupportStarLossScore = 0.15;
+const cloudStrongStarLossScore = 0.3;
+const cloudSupportMeanLiftScore = 0.35;
+const cloudStrongMeanLiftScore = 0.55;
 const flatArtifactGroupMinimum = 3;
 const selectedFileMetadata = new WeakMap();
 let analysisWorkerObjectUrl = "";
@@ -2126,14 +2164,81 @@ function computeMeanStd(gray) {
   return { mean, std: Math.sqrt(Math.max(variance, 0)) };
 }
 
-function computeLaplacianVariance(gray, width, height) {
+function clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights) {
+  const clippingPercent = finitePixels > 0 ? (clippedHighlights / finitePixels) * 100 : 0;
+  const nearSaturationPercent = finitePixels > 0 ? (nearSaturatedHighlights / finitePixels) * 100 : 0;
+  const hardPressure = Math.sqrt(clamp(clippingPercent / hardClippingFullPenaltyPercent, 0, 1));
+  const nearPressure =
+    Math.sqrt(clamp(nearSaturationPercent / nearSaturationFullPenaltyPercent, 0, 1)) *
+    nearSaturationPressureWeight;
+  const clippingPressure = clamp(Math.max(hardPressure, nearPressure), 0, 1);
+
+  return {
+    clippingPercent,
+    nearSaturationPercent,
+    clippingPressure,
+    clippingScore: 1 - clippingPressure
+  };
+}
+
+function computeBasicImageStats(gray, clippingThreshold = bitmapClippingThreshold, nearSaturationThreshold = null) {
+  let mean = 0;
+  let m2 = 0;
+  let finitePixels = 0;
+  let clippedHighlights = 0;
+  let nearSaturatedHighlights = 0;
+  const hardThreshold = Number.isFinite(clippingThreshold) ? clippingThreshold : Number.POSITIVE_INFINITY;
+  const nearThreshold = Number.isFinite(nearSaturationThreshold)
+    ? Math.min(nearSaturationThreshold, hardThreshold)
+    : hardThreshold;
+
+  for (let i = 0; i < gray.length; i += 1) {
+    const value = gray[i];
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+
+    finitePixels += 1;
+    const delta = value - mean;
+    mean += delta / finitePixels;
+    const delta2 = value - mean;
+    m2 += delta * delta2;
+
+    if (value >= hardThreshold) {
+      clippedHighlights += 1;
+    }
+    if (value >= nearThreshold) {
+      nearSaturatedHighlights += 1;
+    }
+  }
+
+  const variance = finitePixels > 1 ? m2 / (finitePixels - 1) : 0;
+  return {
+    mean,
+    std: Math.sqrt(Math.max(variance, 0)),
+    finitePixels,
+    clippedHighlights,
+    nearSaturatedHighlights,
+    clippingStats: clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights)
+  };
+}
+
+function sampleStepForTarget(width, height, targetSamples = 0) {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const safeHeight = Math.max(1, Math.floor(height));
+  const target = Number.isFinite(targetSamples) && targetSamples > 0 ? Math.floor(targetSamples) : safeWidth * safeHeight;
+  return Math.max(1, Math.floor(Math.sqrt((safeWidth * safeHeight) / Math.max(target, 1))));
+}
+
+function computeLaplacianVariance(gray, width, height, options = {}) {
   let mean = 0;
   let m2 = 0;
   let count = 0;
+  const step = sampleStepForTarget(Math.max(1, width - 2), Math.max(1, height - 2), options.sampleTarget);
 
-  for (let y = 1; y < height - 1; y += 1) {
+  for (let y = 1; y < height - 1; y += step) {
     const row = y * width;
-    for (let x = 1; x < width - 1; x += 1) {
+    for (let x = 1; x < width - 1; x += step) {
       const i = row + x;
       if (
         !Number.isFinite(gray[i]) ||
@@ -2156,14 +2261,15 @@ function computeLaplacianVariance(gray, width, height) {
   return count > 1 ? m2 / (count - 1) : 0;
 }
 
-function computeNoise(gray, width, height, mean, std) {
+function computeNoise(gray, width, height, mean, std, options = {}) {
   let totalResidual = 0;
   let samples = 0;
   const upper = mean + std;
+  const step = sampleStepForTarget(Math.max(1, width - 2), Math.max(1, height - 2), options.sampleTarget);
 
-  for (let y = 1; y < height - 1; y += 1) {
+  for (let y = 1; y < height - 1; y += step) {
     const row = y * width;
-    for (let x = 1; x < width - 1; x += 1) {
+    for (let x = 1; x < width - 1; x += step) {
       const i = row + x;
       const value = gray[i];
       if (!Number.isFinite(value) || value <= 5 || value > upper) {
@@ -2714,6 +2820,11 @@ function skippedStarTrackingMetrics(summary = "Skipped for calibration frame") {
     repeatDriftScore: 0,
     repeatedStarFraction: 0,
     multiRepeatFraction: 0,
+    directionalTrailScore: 0,
+    directionalTrailStarFraction: 0,
+    directionalTrailStarCount: 0,
+    trackingSampleStarCount: 0,
+    trackingSampleRegion: "skipped",
     trackingScore: 0,
     trackingSeverity: "Skipped",
     trackingReason: summary,
@@ -2728,6 +2839,495 @@ function skippedStarTrackingMetrics(summary = "Skipped for calibration frame") {
       repeatPairs: []
     }
   };
+}
+
+function normalizedStarFieldRadius(star, width, height) {
+  const halfWidth = Math.max(width / 2, 1);
+  const halfHeight = Math.max(height / 2, 1);
+  const dx = (star.x - width / 2) / halfWidth;
+  const dy = (star.y - height / 2) / halfHeight;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+function trackingRegionLabel(radius) {
+  if (!Number.isFinite(radius)) {
+    return "unknown";
+  }
+  return `central ${Math.round(radius * 100)}% radius`;
+}
+
+function brightMediumStars(stars, minimumStars = trackingMinimumCentralStars) {
+  if (stars.length <= minimumStars) {
+    return stars;
+  }
+
+  const peaks = stars
+    .map((star) => Number(star.peak))
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  if (peaks.length < minimumStars) {
+    return stars;
+  }
+
+  let peakFloor = percentileFromSorted(peaks, trackingMediumPeakPercentile);
+  let filtered = stars.filter((star) => Number.isFinite(star.peak) && star.peak >= peakFloor);
+  if (filtered.length >= minimumStars) {
+    return filtered;
+  }
+
+  peakFloor = percentileFromSorted(peaks, 0.18);
+  filtered = stars.filter((star) => Number.isFinite(star.peak) && star.peak >= peakFloor);
+  return filtered.length >= minimumStars ? filtered : stars;
+}
+
+function guideSizedStars(stars, minimumStars = trackingMinimumCentralStars) {
+  const hfrs = stars
+    .map((star) => Number(star.hfrPx))
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => a - b);
+  if (hfrs.length === 0) {
+    return [];
+  }
+
+  const percentileFloor =
+    hfrs.length > minimumStars ? percentileFromSorted(hfrs, trackingGuideStarHfrPercentile) : 0;
+  const hfrFloor = Math.max(trackingMinimumGuideStarHfrPx, percentileFloor);
+  const filtered = stars.filter((star) => Number.isFinite(star.hfrPx) && star.hfrPx >= hfrFloor);
+  if (filtered.length >= minimumStars) {
+    return filtered;
+  }
+
+  return stars.filter((star) => Number.isFinite(star.hfrPx) && star.hfrPx >= trackingMinimumGuideStarHfrPx);
+}
+
+function reliableGuideStars(stars, minimumStars = trackingMinimumCentralStars) {
+  return brightMediumStars(guideSizedStars(stars, minimumStars), minimumStars);
+}
+
+function evenlySampleByBrightness(stars, limit) {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : stars.length;
+  if (stars.length <= safeLimit) {
+    return stars;
+  }
+
+  const sorted = [...stars].sort((a, b) => b.peak - a.peak);
+  const selected = [];
+  const selectedIds = new Set();
+  const maxIndex = sorted.length - 1;
+  for (let i = 0; i < safeLimit; i += 1) {
+    const t = safeLimit <= 1 ? 0 : i / (safeLimit - 1);
+    const index = Math.min(maxIndex, Math.floor(Math.pow(t, 1.45) * maxIndex));
+    const star = sorted[index];
+    if (!selectedIds.has(star.id)) {
+      selected.push(star);
+      selectedIds.add(star.id);
+    }
+  }
+
+  for (const star of sorted) {
+    if (selected.length >= safeLimit) {
+      break;
+    }
+    if (!selectedIds.has(star.id)) {
+      selected.push(star);
+      selectedIds.add(star.id);
+    }
+  }
+
+  return selected;
+}
+
+function selectStarsForTracking(stars, width, height, limit, options = {}) {
+  const primaryRadius =
+    Number.isFinite(options.centralRadius) && options.centralRadius > 0
+      ? options.centralRadius
+      : trackingCentralFieldRadius;
+  const fallbackRadius =
+    Number.isFinite(options.fallbackCentralRadius) && options.fallbackCentralRadius > primaryRadius
+      ? options.fallbackCentralRadius
+      : trackingFallbackCentralFieldRadius;
+  const minimumStars =
+    Number.isFinite(options.minimumStars) && options.minimumStars > 0
+      ? Math.floor(options.minimumStars)
+      : trackingMinimumCentralStars;
+  const finiteStars = stars.filter(
+    (star) =>
+      Number.isFinite(star.x) &&
+      Number.isFinite(star.y) &&
+      Number.isFinite(star.peak) &&
+      Number.isFinite(star.hfrPx) &&
+      star.hfrPx > 0
+  );
+  const primary = finiteStars.filter((star) => normalizedStarFieldRadius(star, width, height) <= primaryRadius);
+  const primaryGuideStars = reliableGuideStars(primary, minimumStars);
+  if (primaryGuideStars.length >= minimumStars) {
+    return {
+      stars: evenlySampleByBrightness(primaryGuideStars, limit),
+      candidateCount: primaryGuideStars.length,
+      regionRadius: primaryRadius,
+      regionLabel: trackingRegionLabel(primaryRadius)
+    };
+  }
+
+  const fallback = finiteStars.filter((star) => normalizedStarFieldRadius(star, width, height) <= fallbackRadius);
+  const fallbackGuideStars = reliableGuideStars(fallback, minimumStars);
+  return {
+    stars: evenlySampleByBrightness(fallbackGuideStars, limit),
+    candidateCount: fallbackGuideStars.length,
+    regionRadius: fallbackRadius,
+    regionLabel: trackingRegionLabel(fallbackRadius)
+  };
+}
+
+function measureWideTrailShape(gray, width, height, star, mean, std, options = {}) {
+  const radius = Math.max(5, Math.floor(options.windowRadius || standardTrackingTrailWindowRadius));
+  const metricScale = Number.isFinite(options.metricScale) && options.metricScale > 0 ? options.metricScale : 1;
+  const peakSignal = Math.max((Number(star.peak) || 0) - mean, 0);
+  if (peakSignal <= Math.max(std * 0.8, 1e-6)) {
+    return null;
+  }
+
+  const floor = mean + Math.max(std * 0.45, peakSignal * 0.055);
+  const centerX = Number(star.x);
+  const centerY = Number(star.y);
+  if (!Number.isFinite(centerX) || !Number.isFinite(centerY)) {
+    return null;
+  }
+
+  const x0 = Math.max(1, Math.floor(centerX - radius));
+  const x1 = Math.min(width - 2, Math.ceil(centerX + radius));
+  const y0 = Math.max(1, Math.floor(centerY - radius));
+  const y1 = Math.min(height - 2, Math.ceil(centerY + radius));
+  const radiusSquared = radius * radius;
+  const localWidth = x1 - x0 + 1;
+  const localHeight = y1 - y0 + 1;
+  const active = new Uint8Array(localWidth * localHeight);
+
+  for (let ly = 0; ly < localHeight; ly += 1) {
+    const y = y0 + ly;
+    const dy = y - centerY;
+    const row = y * width;
+    for (let lx = 0; lx < localWidth; lx += 1) {
+      const x = x0 + lx;
+      const dx = x - centerX;
+      if (dx * dx + dy * dy > radiusSquared) {
+        continue;
+      }
+      const value = gray[row + x];
+      if (Number.isFinite(value) && value > floor) {
+        active[ly * localWidth + lx] = 1;
+      }
+    }
+  }
+
+  let startX = Math.max(0, Math.min(localWidth - 1, Math.round(centerX) - x0));
+  let startY = Math.max(0, Math.min(localHeight - 1, Math.round(centerY) - y0));
+  let startIndex = startY * localWidth + startX;
+  if (!active[startIndex]) {
+    let bestIndex = -1;
+    let bestValue = -Infinity;
+    for (let dy = -2; dy <= 2; dy += 1) {
+      const ly = startY + dy;
+      if (ly < 0 || ly >= localHeight) {
+        continue;
+      }
+      for (let dx = -2; dx <= 2; dx += 1) {
+        const lx = startX + dx;
+        if (lx < 0 || lx >= localWidth) {
+          continue;
+        }
+        const index = ly * localWidth + lx;
+        if (!active[index]) {
+          continue;
+        }
+        const value = gray[(y0 + ly) * width + x0 + lx];
+        if (value > bestValue) {
+          bestValue = value;
+          bestIndex = index;
+        }
+      }
+    }
+    if (bestIndex < 0) {
+      return null;
+    }
+    startIndex = bestIndex;
+    startX = startIndex % localWidth;
+    startY = Math.floor(startIndex / localWidth);
+  }
+
+  const visited = new Uint8Array(active.length);
+  const stack = [startIndex];
+  const component = [];
+  visited[startIndex] = 1;
+  while (stack.length > 0) {
+    const index = stack.pop();
+    component.push(index);
+    const lx = index % localWidth;
+    const ly = Math.floor(index / localWidth);
+    for (let oy = -1; oy <= 1; oy += 1) {
+      const ny = ly + oy;
+      if (ny < 0 || ny >= localHeight) {
+        continue;
+      }
+      for (let ox = -1; ox <= 1; ox += 1) {
+        if (ox === 0 && oy === 0) {
+          continue;
+        }
+        const nx = lx + ox;
+        if (nx < 0 || nx >= localWidth) {
+          continue;
+        }
+        const neighborIndex = ny * localWidth + nx;
+        if (!active[neighborIndex] || visited[neighborIndex]) {
+          continue;
+        }
+        visited[neighborIndex] = 1;
+        stack.push(neighborIndex);
+      }
+    }
+  }
+
+  if (component.length < 4) {
+    return null;
+  }
+
+  let weightSum = 0;
+  let weightedX = 0;
+  let weightedY = 0;
+
+  for (const index of component) {
+    const lx = index % localWidth;
+    const ly = Math.floor(index / localWidth);
+    const x = x0 + lx;
+    const y = y0 + ly;
+    const value = gray[y * width + x];
+    const weight = value - floor;
+    weightSum += weight;
+    weightedX += weight * x;
+    weightedY += weight * y;
+  }
+
+  if (weightSum < Math.max(peakSignal * 1.8, 1e-6)) {
+    return null;
+  }
+
+  const cx = weightedX / weightSum;
+  const cy = weightedY / weightSum;
+  let mxx = 0;
+  let myy = 0;
+  let mxy = 0;
+
+  for (const index of component) {
+    const lx = index % localWidth;
+    const ly = Math.floor(index / localWidth);
+    const x = x0 + lx;
+    const y = y0 + ly;
+    const value = gray[y * width + x];
+    const weight = value - floor;
+    const sx = x - cx;
+    const sy = y - cy;
+    mxx += weight * sx * sx;
+    myy += weight * sy * sy;
+    mxy += weight * sx * sy;
+  }
+
+  mxx /= weightSum;
+  myy /= weightSum;
+  mxy /= weightSum;
+
+  const trace = mxx + myy;
+  const delta = Math.sqrt(Math.max((mxx - myy) * (mxx - myy) + 4 * mxy * mxy, 0));
+  const major = (trace + delta) / 2;
+  const minor = (trace - delta) / 2;
+  if (major <= 1e-9 || minor <= 1e-9) {
+    return null;
+  }
+
+  const angle = 0.5 * Math.atan2(2 * mxy, mxx - myy);
+  const majorFwhmPx = 2.355 * Math.sqrt(Math.max(major, 1e-9)) * metricScale;
+  const minorFwhmPx = 2.355 * Math.sqrt(Math.max(minor, 1e-9)) * metricScale;
+  return {
+    axisRatio: clamp(majorFwhmPx / Math.max(minorFwhmPx, 1e-6), 1, 12),
+    angle,
+    majorFwhmPx,
+    minorFwhmPx
+  };
+}
+
+function assignWideTrailShapes(gray, width, height, mean, std, stars, options = {}) {
+  const selection = selectStarsForTracking(stars, width, height, options.starLimit, options);
+  const trackingStars = selection.stars;
+  for (const star of trackingStars) {
+    const shape = measureWideTrailShape(gray, width, height, star, mean, std, options);
+    if (!shape) {
+      continue;
+    }
+    star.trailAxisRatio = shape.axisRatio;
+    star.trailAngle = shape.angle;
+    star.trailMajorFwhmPx = shape.majorFwhmPx;
+    star.trailMinorFwhmPx = shape.minorFwhmPx;
+  }
+  return {
+    stars: trackingStars,
+    candidateCount: selection.candidateCount,
+    regionRadius: selection.regionRadius,
+    regionLabel: selection.regionLabel
+  };
+}
+
+function starTrackingAxisRatio(star) {
+  const coreRatio = Number.isFinite(star.axisRatio) ? star.axisRatio : 1;
+  const trailRatio = Number.isFinite(star.trailAxisRatio) ? star.trailAxisRatio : 1;
+  return Math.max(coreRatio, trailRatio);
+}
+
+function starTrackingAngle(star) {
+  const coreRatio = Number.isFinite(star.axisRatio) ? star.axisRatio : 1;
+  const trailRatio = Number.isFinite(star.trailAxisRatio) ? star.trailAxisRatio : 0;
+  if (Number.isFinite(star.trailAngle) && trailRatio > coreRatio * 1.08) {
+    return star.trailAngle;
+  }
+  return star.angle;
+}
+
+function starHasDirectionalTrailShape(star) {
+  const axisRatio = starTrackingAxisRatio(star);
+  const major = Number(star.trailMajorFwhmPx) || 0;
+  const minor = Number(star.trailMinorFwhmPx) || 0;
+  return axisRatio > 1.32 && major > Math.max(2.8, minor * 1.28) && major - minor > 0.85;
+}
+
+function starLooksElongated(star) {
+  if (starHasDirectionalTrailShape(star)) {
+    return true;
+  }
+
+  const coreRatio = Number.isFinite(star.axisRatio) ? star.axisRatio : 1;
+  const roundness = Number.isFinite(star.roundness) ? star.roundness : 1;
+  return coreRatio > 1.55 && roundness < 0.68;
+}
+
+function computeDirectionalTrailMetrics(trackingStars) {
+  const usable = trackingStars.filter(
+    (star) =>
+      Number.isFinite(star.trailAxisRatio) &&
+      Number.isFinite(star.trailAngle) &&
+      Number.isFinite(star.trailMajorFwhmPx) &&
+      Number.isFinite(star.trailMinorFwhmPx)
+  );
+
+  if (usable.length < 8) {
+    return {
+      score: 0,
+      trailedStars: 0,
+      usableStars: usable.length,
+      trailedStarFraction: 0,
+      meanAxisRatio: 1,
+      orientationCoherence: 0,
+      orientationAngle: null
+    };
+  }
+
+  const trailed = usable.filter((star) => starHasDirectionalTrailShape(star));
+
+  if (trailed.length === 0) {
+    return {
+      score: 0,
+      trailedStars: 0,
+      usableStars: usable.length,
+      trailedStarFraction: 0,
+      meanAxisRatio: 1,
+      orientationCoherence: 0,
+      orientationAngle: null
+    };
+  }
+
+  let ratioSum = 0;
+  let orientationX = 0;
+  let orientationY = 0;
+  let weightSum = 0;
+  for (const star of trailed) {
+    const axisRatio = starTrackingAxisRatio(star);
+    const angle = starTrackingAngle(star);
+    if (!Number.isFinite(angle)) {
+      continue;
+    }
+    const major = Number(star.trailMajorFwhmPx) || 0;
+    const minor = Number(star.trailMinorFwhmPx) || 0;
+    const stretchWeight =
+      clamp((axisRatio - 1.18) / 1.6, 0, 1) *
+      clamp((major - minor) / Math.max(major * 0.45, 1), 0.25, 1);
+    if (stretchWeight <= 0) {
+      continue;
+    }
+    ratioSum += axisRatio * stretchWeight;
+    orientationX += Math.cos(2 * angle) * stretchWeight;
+    orientationY += Math.sin(2 * angle) * stretchWeight;
+    weightSum += stretchWeight;
+  }
+
+  if (weightSum <= 0) {
+    return {
+      score: 0,
+      trailedStars: trailed.length,
+      usableStars: usable.length,
+      trailedStarFraction: trailed.length / usable.length,
+      meanAxisRatio: 1,
+      orientationCoherence: 0,
+      orientationAngle: null
+    };
+  }
+
+  const meanAxisRatio = ratioSum / weightSum;
+  const orientationCoherence = Math.sqrt(orientationX * orientationX + orientationY * orientationY) / weightSum;
+  const orientationAngle = 0.5 * Math.atan2(orientationY, orientationX);
+  const trailedStarFraction = trailed.length / usable.length;
+  const countScore = clamp((trailed.length - 6) / 44, 0, 1);
+  const fractionScore = clamp((trailedStarFraction - 0.025) / 0.18, 0, 1);
+  const shapeScore = clamp((meanAxisRatio - 1.22) / 1.15, 0, 1);
+  let score = clamp((countScore * 0.5 + fractionScore * 0.5) * orientationCoherence * shapeScore, 0, 1);
+
+  if (trailed.length >= 16 && orientationCoherence > 0.7 && meanAxisRatio > 1.5) {
+    score = Math.max(score, 0.18);
+  }
+  if (trailed.length >= 28 && orientationCoherence > 0.75 && meanAxisRatio > 1.65) {
+    score = Math.max(score, 0.28);
+  }
+
+  return {
+    score,
+    trailedStars: trailed.length,
+    usableStars: usable.length,
+    trailedStarFraction,
+    meanAxisRatio,
+    orientationCoherence,
+    orientationAngle
+  };
+}
+
+function selectStarsForOverlay(stars, repeatedStarIds, limit, trackingStarIds = new Set(), trackingAlert = false) {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : stars.length;
+  if (stars.length <= safeLimit) {
+    return stars;
+  }
+
+  const priorityStars = [...stars].sort((a, b) => {
+    const repeatedA = repeatedStarIds.has(a.id) ? 1 : 0;
+    const repeatedB = repeatedStarIds.has(b.id) ? 1 : 0;
+    if (repeatedA !== repeatedB) {
+      return repeatedB - repeatedA;
+    }
+
+    const elongatedA = trackingAlert && trackingStarIds.has(a.id) && starLooksElongated(a) ? 1 : 0;
+    const elongatedB = trackingAlert && trackingStarIds.has(b.id) && starLooksElongated(b) ? 1 : 0;
+    if (elongatedA !== elongatedB) {
+      return elongatedB - elongatedA;
+    }
+
+    return b.peak - a.peak;
+  });
+
+  return priorityStars.slice(0, safeLimit).sort((a, b) => a.id - b.id);
 }
 
 function computeStarRoundnessAndTracking(gray, width, height, mean, std, options = {}) {
@@ -2747,6 +3347,18 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
     Number.isFinite(options.repeatDriftBrightStarLimit) && options.repeatDriftBrightStarLimit > 0
       ? Math.floor(options.repeatDriftBrightStarLimit)
       : standardRepeatDriftBrightStarLimit;
+  const starOverlayLimit =
+    Number.isFinite(options.starOverlayLimit) && options.starOverlayLimit > 0
+      ? Math.floor(options.starOverlayLimit)
+      : Number.POSITIVE_INFINITY;
+  const trackingTrailStarLimit =
+    Number.isFinite(options.trackingTrailStarLimit) && options.trackingTrailStarLimit > 0
+      ? Math.floor(options.trackingTrailStarLimit)
+      : standardTrackingTrailStarLimit;
+  const trackingTrailWindowRadius =
+    Number.isFinite(options.trackingTrailWindowRadius) && options.trackingTrailWindowRadius > 0
+      ? Math.floor(options.trackingTrailWindowRadius)
+      : standardTrackingTrailWindowRadius;
   const threshold = mean + std * 1.8;
   const radius = 2;
   const stars = [];
@@ -2893,10 +3505,15 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
       eccentricity: 0,
       hfr: 0,
       starSharpness: 0,
-      repeatDriftSource: "all-stars",
+      repeatDriftSource: "central-stars",
       repeatDriftScore: 0,
       repeatedStarFraction: 0,
       multiRepeatFraction: 0,
+      directionalTrailScore: 0,
+      directionalTrailStarFraction: 0,
+      directionalTrailStarCount: 0,
+      trackingSampleStarCount: 0,
+      trackingSampleRegion: "none",
       trackingScore: 0,
       trackingSeverity: "Low confidence",
       trackingReason: "Low confidence",
@@ -2947,7 +3564,17 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
       ? 1 / Math.max(medianMajorFwhm * 0.8 + p35MajorFwhm * 0.2, 0.2)
       : 0;
 
-  const elongated = stars.filter((star) => star.axisRatio > 1.2);
+  const trackingSelection = assignWideTrailShapes(gray, width, height, mean, std, stars, {
+    metricScale,
+    windowRadius: trackingTrailWindowRadius,
+    starLimit: trackingTrailStarLimit,
+    centralRadius: trackingCentralFieldRadius,
+    fallbackCentralRadius: trackingFallbackCentralFieldRadius,
+    minimumStars: trackingMinimumCentralStars
+  });
+  const trackingStars = trackingSelection.stars;
+  const directionalTrail = computeDirectionalTrailMetrics(trackingStars);
+  const elongated = trackingStars.filter((star) => starTrackingAxisRatio(star) > 1.2);
   let meanAxisRatio = 1;
   let orientationCoherence = 0;
   let orientationAngle = null;
@@ -2957,9 +3584,13 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
     let orientationX = 0;
     let orientationY = 0;
     for (const star of elongated) {
-      axisRatioSum += star.axisRatio;
-      orientationX += Math.cos(2 * star.angle);
-      orientationY += Math.sin(2 * star.angle);
+      const axisRatio = starTrackingAxisRatio(star);
+      const angle = starTrackingAngle(star);
+      axisRatioSum += axisRatio;
+      if (Number.isFinite(angle)) {
+        orientationX += Math.cos(2 * angle);
+        orientationY += Math.sin(2 * angle);
+      }
     }
     meanAxisRatio = axisRatioSum / elongated.length;
     orientationCoherence = Math.sqrt(orientationX * orientationX + orientationY * orientationY) / elongated.length;
@@ -2968,21 +3599,29 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
     }
   }
 
-  const elongatedFraction = elongated.length / stars.length;
+  const elongatedFraction = elongated.length / Math.max(trackingStars.length, 1);
   const shapeFactor = clamp((meanAxisRatio - 1) / 1.4, 0, 1);
-  const trailingScore = elongatedFraction * orientationCoherence * shapeFactor;
+  const coreTrailingScore = elongatedFraction * orientationCoherence * shapeFactor;
+  const trailingScore = Math.max(coreTrailingScore, directionalTrail.score);
+  const strongestTrailAngle =
+    directionalTrail.score > coreTrailingScore && directionalTrail.orientationAngle !== null
+      ? directionalTrail.orientationAngle
+      : orientationAngle;
+  const strongestTrailCoherence = Math.max(orientationCoherence, directionalTrail.orientationCoherence || 0);
   const preferredRepeatAngle =
-    orientationAngle !== null && orientationCoherence > 0.5 && elongated.length >= 10 ? orientationAngle : null;
-  const repeatDriftAll = computeCloseRepeatDrift(stars, preferredRepeatAngle, 0.45, repeatDistanceScale, {
+    strongestTrailAngle !== null && strongestTrailCoherence > 0.5 && elongated.length >= 10
+      ? strongestTrailAngle
+      : null;
+  const repeatDriftAll = computeCloseRepeatDrift(trackingStars, preferredRepeatAngle, 0.45, repeatDistanceScale, {
     maxPairs: repeatDriftMaxPairs
   });
   let repeatDrift = repeatDriftAll;
-  let repeatDriftSource = "all-stars";
+  let repeatDriftSource = "central-stars";
 
-  if (stars.length >= 800) {
-    const brightStars = [...stars]
+  if (trackingStars.length >= 800) {
+    const brightStars = [...trackingStars]
       .sort((a, b) => b.peak - a.peak)
-      .slice(0, Math.min(repeatDriftBrightStarLimit, stars.length));
+      .slice(0, Math.min(repeatDriftBrightStarLimit, trackingStars.length));
     const repeatDriftBright = computeCloseRepeatDrift(brightStars, preferredRepeatAngle, 0.05, repeatDistanceScale, {
       maxPairs: repeatDriftMaxPairs
     });
@@ -2997,7 +3636,7 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
 
     if (brightLooksReliable && brightIsClearlyStronger) {
       repeatDrift = repeatDriftBright;
-      repeatDriftSource = "bright-stars";
+      repeatDriftSource = "central-bright-stars";
     }
   }
 
@@ -3010,16 +3649,28 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
 
   let trackingSeverity = "None";
   let trackingReason = "None";
-  const severeByTrail =
-    trailingScore > 0.30 &&
+  const severeByCoreTrail =
+    coreTrailingScore > 0.30 &&
     elongatedFraction > 0.35 &&
     meanAxisRatio > 1.35 &&
     orientationCoherence > 0.72;
-  const possibleByTrail =
-    trailingScore > 0.16 &&
+  const possibleByCoreTrail =
+    coreTrailingScore > 0.16 &&
     elongatedFraction > 0.22 &&
     meanAxisRatio > 1.2 &&
     orientationCoherence > 0.58;
+  const severeByWideTrail =
+    directionalTrail.score > 0.2 &&
+    directionalTrail.trailedStars >= 18 &&
+    directionalTrail.meanAxisRatio > 1.5 &&
+    directionalTrail.orientationCoherence > 0.68;
+  const possibleByWideTrail =
+    directionalTrail.score > 0.075 &&
+    directionalTrail.trailedStars >= 10 &&
+    directionalTrail.meanAxisRatio > 1.34 &&
+    directionalTrail.orientationCoherence > 0.56;
+  const severeByTrail = severeByCoreTrail || severeByWideTrail;
+  const possibleByTrail = possibleByCoreTrail || possibleByWideTrail;
   const severeByRepeat =
     repeatScore > 0.23 &&
     repeatDrift.repeatedStarFraction > 0.22 &&
@@ -3030,7 +3681,7 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
     repeatDrift.repeatedStarFraction > 0.12 &&
     repeatDrift.alignmentCoherence > 0.48;
 
-  if (stars.length < 12) {
+  if (trackingStars.length < 12) {
     trackingSeverity = "Low confidence";
     trackingReason = "Low confidence";
   } else if (severeByTrail || severeByRepeat) {
@@ -3060,21 +3711,37 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
       })
     : emptyHaloWarning();
   const repeatedStarIds = new Set(repeatDrift.repeatStarIndexes || []);
+  const trackingStarIds = new Set(trackingStars.map((star) => star.id));
+  const trackingAlert = trackingSeverity === "Possible" || trackingSeverity === "Severe";
+  const overlayStars = selectStarsForOverlay(
+    trackingStars,
+    repeatedStarIds,
+    starOverlayLimit,
+    trackingStarIds,
+    trackingAlert
+  );
+  const overlayStarIds = new Set(overlayStars.map((star) => star.id));
   const starOverlay = {
-    stars: stars.map((star) => ({
+    stars: overlayStars.map((star) => ({
       id: star.id,
       x: clamp(star.x / width, 0, 1),
       y: clamp(star.y / height, 0, 1),
       hfr: star.hfrPx,
       majorFwhm: star.majorFwhmPx,
       minorFwhm: star.minorFwhmPx,
+      trailAxisRatio: star.trailAxisRatio,
+      trailMajorFwhm: star.trailMajorFwhmPx,
+      trailMinorFwhm: star.trailMinorFwhmPx,
       roundness: star.roundness,
-      axisRatio: star.axisRatio,
-      angle: star.angle,
-      elongated: star.axisRatio > 1.25 || star.roundness < 0.78,
+      axisRatio: starTrackingAxisRatio(star),
+      angle: starTrackingAngle(star),
+      trackingSample: trackingStarIds.has(star.id),
+      elongated: trackingAlert && trackingStarIds.has(star.id) && starLooksElongated(star),
       repeated: repeatedStarIds.has(star.id)
     })),
-    repeatPairs: repeatDrift.repeatPairs || []
+    repeatPairs: (repeatDrift.repeatPairs || []).filter(
+      (pair) => overlayStarIds.has(pair.a) && overlayStarIds.has(pair.b)
+    )
   };
 
   return {
@@ -3089,6 +3756,11 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
     repeatDriftScore: repeatScore,
     repeatedStarFraction: repeatDrift.repeatedStarFraction,
     multiRepeatFraction: repeatDrift.multiRepeatFraction,
+    directionalTrailScore: directionalTrail.score,
+    directionalTrailStarFraction: directionalTrail.trailedStarFraction,
+    directionalTrailStarCount: directionalTrail.trailedStars,
+    trackingSampleStarCount: trackingStars.length,
+    trackingSampleRegion: trackingSelection.regionLabel,
     trackingScore,
     trackingSeverity,
     trackingReason,
@@ -3124,20 +3796,7 @@ function computeHighlightClipping(gray, clippingThreshold = bitmapClippingThresh
     }
   }
 
-  const clippingPercent = finitePixels > 0 ? (clippedHighlights / finitePixels) * 100 : 0;
-  const nearSaturationPercent = finitePixels > 0 ? (nearSaturatedHighlights / finitePixels) * 100 : 0;
-  const hardPressure = Math.sqrt(clamp(clippingPercent / hardClippingFullPenaltyPercent, 0, 1));
-  const nearPressure =
-    Math.sqrt(clamp(nearSaturationPercent / nearSaturationFullPenaltyPercent, 0, 1)) *
-    nearSaturationPressureWeight;
-  const clippingPressure = clamp(Math.max(hardPressure, nearPressure), 0, 1);
-
-  return {
-    clippingPercent,
-    nearSaturationPercent,
-    clippingPressure,
-    clippingScore: 1 - clippingPressure
-  };
+  return clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights);
 }
 
 function computeDistributionStats(gray, mean, std, saturationLevel, maxSamples = standardDistributionMaxSamples) {
@@ -4029,16 +4688,17 @@ function applyCalibrationConsistency(results) {
   }
 }
 
-function computeElongation(gray, width, height, mean, std) {
+function computeElongation(gray, width, height, mean, std, options = {}) {
   const threshold = mean + std * 2;
   let gxx = 0;
   let gyy = 0;
   let gxy = 0;
   let count = 0;
+  const step = sampleStepForTarget(Math.max(1, width - 2), Math.max(1, height - 2), options.sampleTarget);
 
-  for (let y = 1; y < height - 1; y += 1) {
+  for (let y = 1; y < height - 1; y += step) {
     const row = y * width;
-    for (let x = 1; x < width - 1; x += 1) {
+    for (let x = 1; x < width - 1; x += step) {
       const i = row + x;
       if (
         !Number.isFinite(gray[i]) ||
@@ -4243,13 +4903,13 @@ function applyTrackingQualityPenalty(score, result) {
     if (repeatDrift) {
       return Math.min(score * 0.38, 0.28);
     }
-    return score * 0.68;
+    return Math.min(score * 0.45, 0.48);
   }
   if (result.trackingSeverity === "Possible") {
     if (repeatDrift) {
       return Math.min(score * 0.55, 0.4);
     }
-    return score * 0.82;
+    return Math.min(score * 0.68, 0.65);
   }
   return score;
 }
@@ -4304,29 +4964,42 @@ function updateCloudAssessmentForGroup(results) {
         ? clamp((result.mean - meanMedian) / meanDenominator, 0, 1)
         : 0;
     const pairedEvidence = Math.min(structureScore, Math.max(starLossScore, meanLiftScore));
+    const rangeStructurePossible =
+      rangePercent >= cloudPossibleBackgroundRangePercent && structureScore >= cloudPossibleStructureScore;
+    const rangeStructureLikely =
+      rangePercent >= cloudLikelyBackgroundRangePercent && structureScore >= cloudLikelyStructureScore;
+    const supportEvidence =
+      starLossScore >= cloudSupportStarLossScore || meanLiftScore >= cloudSupportMeanLiftScore;
+    const strongSupportEvidence =
+      starLossScore >= cloudStrongStarLossScore || meanLiftScore >= cloudStrongMeanLiftScore;
     let cloudScore = clamp(
-      structureScore * 0.48 + starLossScore * 0.34 + meanLiftScore * 0.2 + pairedEvidence * 0.25,
+      structureScore * 0.54 + starLossScore * 0.18 + meanLiftScore * 0.14 + pairedEvidence * 0.24,
       0,
       1
     );
-    const strongStructureAlone = structureScore >= 0.82 && rangePercent >= 22;
-    const possibleStructureAlone = structureScore >= 0.62 && rangePercent >= 14;
-    if (strongStructureAlone) {
+
+    if (rangeStructureLikely) {
       cloudScore = Math.max(cloudScore, 0.72);
-    } else if (possibleStructureAlone) {
-      cloudScore = Math.max(cloudScore, 0.46);
+      if (supportEvidence) {
+        cloudScore = Math.max(cloudScore, 0.78);
+      }
+    } else if (rangeStructurePossible) {
+      cloudScore = Math.max(cloudScore, 0.44);
+      if (supportEvidence) {
+        cloudScore = Math.max(cloudScore, 0.52);
+      }
+      if (strongSupportEvidence) {
+        cloudScore = Math.max(cloudScore, 0.62);
+      }
     }
 
     let cloudSeverity = "None";
     if (
-      cloudScore >= 0.7 &&
-      ((starLossScore >= 0.18 && structureScore >= 0.32) || meanLiftScore >= 0.62 || strongStructureAlone)
+      rangeStructureLikely ||
+      (rangeStructurePossible && strongSupportEvidence && (rangePercent >= 4.8 || structureScore >= 0.06))
     ) {
       cloudSeverity = "Likely";
-    } else if (
-      cloudScore >= 0.43 &&
-      ((starLossScore >= 0.1 && structureScore >= 0.25) || meanLiftScore >= 0.42 || possibleStructureAlone)
-    ) {
+    } else if (rangeStructurePossible) {
       cloudSeverity = "Possible";
     }
 
@@ -4334,13 +5007,17 @@ function updateCloudAssessmentForGroup(results) {
     result.cloudScore = cloudScore;
     result.cloudStarLossScore = starLossScore;
     result.cloudMeanLiftScore = meanLiftScore;
-    const relativeSummary = hasRelativeStarReference
-      ? `${formatMetric(starLossScore * 100, 0)}% star loss signal`
-      : `single-frame structure check (${starCounts.length}/${cloudRelativePeerMinimum} same-shot/filter frames)`;
+    const relativeSummary =
+      hasRelativeStarReference && hasRelativeMeanReference
+        ? `${formatMetric(starLossScore * 100, 0)}% star loss, ${formatMetric(meanLiftScore * 100, 0)}% mean-lift signal`
+        : `single-frame structure check (${starCounts.length}/${cloudRelativePeerMinimum} same-shot/filter frames)`;
     result.cloudSummary =
       cloudSeverity === "None"
         ? "No cloud warning"
-        : `${cloudSeverity} cloud: ${formatMetric(rangePercent, 1)}% background range, ${relativeSummary}`;
+        : `${cloudSeverity} cloud: ${formatMetric(rangePercent, 1)}% background range, structure ${formatMetric(
+            structureScore,
+            2
+          )}, ${relativeSummary}`;
   }
 }
 
@@ -4387,7 +5064,7 @@ function computeFinalScoresForGroup(results) {
       ),
       scoreComponent("Noise", noiseScore, weights.noise, weightTotal, "Lower background residual scores higher"),
       scoreComponent("Roundness", roundnessScore[i], weights.stars, weightTotal, "FWHM minor/major plus moment shape"),
-      scoreComponent("Star Count", starCountNorm[i], weights.starCount, weightTotal, "Relative to this filter group"),
+      scoreComponent("Star Count", starCountNorm[i], weights.starCount, weightTotal, "Relative to this object-shot/filter group"),
       scoreComponent(
         "Clipping",
         clippingScore[i],
@@ -4523,6 +5200,16 @@ function trackingLabel(result) {
     return "Possible Drift";
   }
   return "OK";
+}
+
+function trackingSampleLabel(result) {
+  const count = Number(result.trackingSampleStarCount);
+  if (!Number.isFinite(count) || count <= 0) {
+    return "-";
+  }
+  const region = String(result.trackingSampleRegion || "");
+  const match = region.match(/central\s+(\d+)%/i);
+  return match ? `${count} / ${match[1]}%` : String(count);
 }
 
 function haloLabel(result) {
@@ -4766,7 +5453,8 @@ function metricItems(result) {
     ["Cloud", cloudLabel(result)],
     ["Clip", `${formatMetric(result.clipping, 4)}%`],
     ["Near Sat", `${formatMetric(result.nearSaturation, 4)}%`],
-    ["Tracking", trackingLabel(result)]
+    ["Tracking", trackingLabel(result)],
+    ["Guide Stars", trackingSampleLabel(result)]
   ];
 }
 
@@ -5377,7 +6065,11 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
   }
   const star = selectedOverlayStar(result);
   if (star) {
-    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%`;
+    const trailText =
+      Number.isFinite(star.trailAxisRatio) && star.trailAxisRatio > 1.25
+        ? `, trail ratio ${formatMetric(star.trailAxisRatio, 2)}`
+        : "";
+    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%${trailText}`;
     return;
   }
   if (fallbackStatus) {
@@ -5412,7 +6104,9 @@ function updateStarOverlayButton() {
   zoomStarOverlayBtn.disabled = !supported;
   zoomStarOverlayBtn.classList.toggle("active", supported && state.starOverlayActive);
   zoomStarOverlayBtn.setAttribute("aria-pressed", String(supported && state.starOverlayActive));
-  zoomStarOverlayBtn.title = supported ? "Show detected stars" : "Star overlay is only available for light frames";
+  zoomStarOverlayBtn.title = supported
+    ? "Show guide-star sample"
+    : "Guide-star overlay is only available for light frames";
 }
 
 function drawZoomStarOverlay() {
@@ -6227,7 +6921,6 @@ function refreshResultThumbnail(result) {
 }
 
 function buildAnalysisResult(file, gray, width, height, previewSource, options = {}) {
-  const { mean, std } = computeMeanStd(gray);
   const analysisMode = normalizeAnalysisMode(options.analysisMode || getAnalysisMode());
   const analysisConfig = options.analysisConfig || getAnalysisModeConfig(analysisMode);
   const header = options.header || null;
@@ -6260,8 +6953,11 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     Number.isFinite(options.nearSaturationThreshold) && options.nearSaturationThreshold > 0
       ? options.nearSaturationThreshold
       : bitmapNearSaturationThreshold;
+  const basicStats = options.basicStats || computeBasicImageStats(gray, clippingThreshold, nearSaturationThreshold);
+  const mean = basicStats.mean;
+  const std = basicStats.std;
   const clippingStats =
-    options.clippingStats || computeHighlightClipping(gray, clippingThreshold, nearSaturationThreshold);
+    options.clippingStats || basicStats.clippingStats || computeHighlightClipping(gray, clippingThreshold, nearSaturationThreshold);
   const distribution = computeDistributionStats(
     gray,
     mean,
@@ -6297,16 +6993,23 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
         repeatDistanceScale: options.repeatDistanceScale || 1,
         repeatDriftMaxPairs: analysisConfig.repeatDriftMaxPairs,
         repeatDriftBrightStarLimit: analysisConfig.repeatDriftBrightStarLimit,
+        trackingTrailStarLimit: analysisConfig.trackingTrailStarLimit,
+        trackingTrailWindowRadius: analysisConfig.trackingTrailWindowRadius,
+        starOverlayLimit: analysisConfig.starOverlayLimit,
         saturationThreshold,
         haloEnabled: true
       });
-  const sharpnessGlobal = isCalibration ? NaN : computeLaplacianVariance(gray, width, height);
+  const sharpnessGlobal = isCalibration
+    ? NaN
+    : computeLaplacianVariance(gray, width, height, { sampleTarget: analysisConfig.laplacianSampleTarget });
   const sharpnessStar = starMetrics.starSharpness;
   const result = {
+    calculationVersion: appVersion,
     fileName: displayFilePath(file) || file.name,
     fileKey: fileIdentityKey(file),
     sourceFile: file,
     analysisMode,
+    analysisPixelSource: options.analysisPixelSource || "working image",
     filterName: filterInfo.name || unknownFilterName,
     filterSource: filterInfo.source || "None",
     frameType: frameTypeInfo.name || unknownFrameTypeName,
@@ -6354,7 +7057,7 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     medianPercent: distribution.medianPercent,
     spreadPercent: distribution.spreadPercent,
     noisePercent: distribution.noisePercent,
-    noise: computeNoise(gray, width, height, mean, std),
+    noise: computeNoise(gray, width, height, mean, std, { sampleTarget: analysisConfig.noiseSampleTarget }),
     starRoundness: starMetrics.starRoundness,
     fwhmRoundness: starMetrics.fwhmRoundness,
     axisRoundness: starMetrics.axisRoundness,
@@ -6369,6 +7072,11 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     repeatDriftScore: starMetrics.repeatDriftScore,
     repeatedStarFraction: starMetrics.repeatedStarFraction,
     multiRepeatFraction: starMetrics.multiRepeatFraction,
+    directionalTrailScore: starMetrics.directionalTrailScore,
+    directionalTrailStarFraction: starMetrics.directionalTrailStarFraction,
+    directionalTrailStarCount: starMetrics.directionalTrailStarCount,
+    trackingSampleStarCount: starMetrics.trackingSampleStarCount,
+    trackingSampleRegion: starMetrics.trackingSampleRegion,
     trackingScore: starMetrics.trackingScore,
     trackingSeverity: starMetrics.trackingSeverity,
     trackingReason: starMetrics.trackingReason,
@@ -6420,7 +7128,9 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     calibrationSeverity: "None",
     calibrationSummary: "",
     calibrationWarnings: [],
-    elongation: isCalibration ? NaN : computeElongation(gray, width, height, mean, std),
+    elongation: isCalibration
+      ? NaN
+      : computeElongation(gray, width, height, mean, std, { sampleTarget: analysisConfig.elongationSampleTarget }),
     previewSource,
     zoomDetail: "",
     thumbnail: ""
@@ -6458,7 +7168,8 @@ async function analyzeBitmapImageFile(file, analysisMode = getAnalysisMode(), an
   };
   return buildAnalysisResult(file, gray, width, height, previewSource, {
     analysisMode,
-    analysisConfig
+    analysisConfig,
+    analysisPixelSource: "bitmap analysis canvas"
   });
 }
 
@@ -6489,10 +7200,22 @@ async function readFitsFrame(file) {
   const bscale = Number.isFinite(Number(header.BSCALE)) ? Number(header.BSCALE) : 1;
   const bzero = Number.isFinite(Number(header.BZERO)) ? Number(header.BZERO) : 0;
   const blank = Number.isFinite(Number(header.BLANK)) ? Number(header.BLANK) : null;
+  const saturationLevels = fitsSaturationLevels(bitpix, bscale, bzero);
+  const hardThreshold = Number.isFinite(saturationLevels.clippingThreshold)
+    ? saturationLevels.clippingThreshold
+    : Number.POSITIVE_INFINITY;
+  const nearThreshold = Number.isFinite(saturationLevels.nearSaturationThreshold)
+    ? Math.min(saturationLevels.nearSaturationThreshold, hardThreshold)
+    : hardThreshold;
 
   const dataView = new DataView(buffer);
   const rawGray = new Float32Array(framePixelCount);
   let byteOffset = dataOffset;
+  let mean = 0;
+  let m2 = 0;
+  let finitePixels = 0;
+  let clippedHighlights = 0;
+  let nearSaturatedHighlights = 0;
 
   for (let i = 0; i < framePixelCount; i += 1) {
     const raw = readFitsPixel(dataView, byteOffset, bitpix);
@@ -6502,8 +7225,35 @@ async function readFitsFrame(file) {
       rawGray[i] = NaN;
       continue;
     }
-    rawGray[i] = raw * bscale + bzero;
+    const scaled = raw * bscale + bzero;
+    rawGray[i] = scaled;
+    if (!Number.isFinite(scaled)) {
+      continue;
+    }
+
+    finitePixels += 1;
+    const delta = scaled - mean;
+    mean += delta / finitePixels;
+    const delta2 = scaled - mean;
+    m2 += delta * delta2;
+
+    if (scaled >= hardThreshold) {
+      clippedHighlights += 1;
+    }
+    if (scaled >= nearThreshold) {
+      nearSaturatedHighlights += 1;
+    }
   }
+
+  const variance = finitePixels > 1 ? m2 / (finitePixels - 1) : 0;
+  const basicStats = {
+    mean,
+    std: Math.sqrt(Math.max(variance, 0)),
+    finitePixels,
+    clippedHighlights,
+    nearSaturatedHighlights,
+    clippingStats: clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights)
+  };
 
   return {
     rawGray,
@@ -6512,41 +7262,37 @@ async function readFitsFrame(file) {
     header,
     bitpix,
     bscale,
-    bzero
+    bzero,
+    saturationLevels,
+    basicStats,
+    clippingStats: basicStats.clippingStats
   };
 }
 
 async function analyzeFitsImageFile(file, analysisMode = getAnalysisMode(), analysisConfig = getAnalysisModeConfig(analysisMode)) {
-  const { rawGray, width, height, header, bitpix, bscale, bzero } = await readFitsFrame(file);
+  const { rawGray, width, height, header, saturationLevels, basicStats, clippingStats } = await readFitsFrame(file);
   const previewImage = downsampleFloatImage(rawGray, width, height, previewMaxDimension);
-  const analysisImage = downsampleFloatImage(rawGray, width, height, analysisConfig.fitsAnalysisMaxDimension);
-  const analysisScale = analysisImage.width / width;
   const oldPreviewScale = Math.min(1, previewMaxDimension / Math.max(width, height));
-  const metricScale = analysisScale > 0 ? 1 / analysisScale : 1;
-  const repeatDistanceScale = oldPreviewScale > 0 ? analysisScale / oldPreviewScale : 1;
-  const saturationLevels = fitsSaturationLevels(bitpix, bscale, bzero);
   const saturationThreshold = saturationLevels.clippingThreshold;
-  const clippingStats = computeHighlightClipping(
-    rawGray,
-    saturationLevels.clippingThreshold,
-    saturationLevels.nearSaturationThreshold
-  );
+  const repeatDistanceScale = oldPreviewScale > 0 ? 1 / oldPreviewScale : 1;
   const previewSource = {
     kind: "gray",
     width: previewImage.width,
     height: previewImage.height,
     data: new Float32Array(previewImage.gray)
   };
-  return buildAnalysisResult(file, analysisImage.gray, analysisImage.width, analysisImage.height, previewSource, {
+  return buildAnalysisResult(file, rawGray, width, height, previewSource, {
     analysisMode,
     analysisConfig,
     fullWidth: width,
     fullHeight: height,
-    metricScale,
+    analysisPixelSource: "full-resolution FITS",
+    metricScale: 1,
     repeatDistanceScale,
     saturationThreshold,
     clippingThreshold: saturationThreshold,
     nearSaturationThreshold: saturationLevels.nearSaturationThreshold,
+    basicStats,
     clippingStats,
     header,
     filterInfo: detectFilterForFile(file, header),
@@ -6622,6 +7368,9 @@ function analysisWorkerFunctionSource() {
     getAnalysisModeConfig,
     toLuma,
     computeMeanStd,
+    clippingStatsFromCounts,
+    computeBasicImageStats,
+    sampleStepForTarget,
     computeLaplacianVariance,
     computeNoise,
     lineAngleDifference,
@@ -6634,6 +7383,21 @@ function analysisWorkerFunctionSource() {
     computeHaloWarning,
     emptyHaloWarning,
     skippedStarTrackingMetrics,
+    normalizedStarFieldRadius,
+    trackingRegionLabel,
+    brightMediumStars,
+    guideSizedStars,
+    reliableGuideStars,
+    evenlySampleByBrightness,
+    selectStarsForTracking,
+    measureWideTrailShape,
+    assignWideTrailShapes,
+    starTrackingAxisRatio,
+    starTrackingAngle,
+    starHasDirectionalTrailShape,
+    starLooksElongated,
+    computeDirectionalTrailMetrics,
+    selectStarsForOverlay,
     computeStarRoundnessAndTracking,
     computeHighlightClipping,
     computeDistributionStats,
@@ -6661,6 +7425,7 @@ function analysisWorkerFunctionSource() {
 function createAnalysisWorkerSource() {
   return `
 const selectedFileMetadata = new WeakMap();
+const appVersion = ${JSON.stringify(appVersion)};
 const defaultAnalysisMode = ${JSON.stringify(defaultAnalysisMode)};
 const unknownFilterName = ${JSON.stringify(unknownFilterName)};
 const unknownFrameTypeName = ${JSON.stringify(unknownFrameTypeName)};
@@ -6688,15 +7453,24 @@ const lowGlowBackIlluminatedCameraPatterns = [${lowGlowBackIlluminatedCameraPatt
 const calibrationFrameTypes = new Set(${JSON.stringify(Array.from(calibrationFrameTypes))});
 const fitsExtensions = new Set(${JSON.stringify(Array.from(fitsExtensions))});
 const previewMaxDimension = ${previewMaxDimension};
-const fitsAnalysisMaxDimension = ${fitsAnalysisMaxDimension};
 const bitmapAnalysisMaxDimension = ${bitmapAnalysisMaxDimension};
 const standardDistributionMaxSamples = ${standardDistributionMaxSamples};
 const standardCloudTileSamples = ${standardCloudTileSamples};
+const standardTrackingTrailStarLimit = ${standardTrackingTrailStarLimit};
+const standardTrackingTrailWindowRadius = ${standardTrackingTrailWindowRadius};
 const standardRepeatDriftMaxPairs = ${standardRepeatDriftMaxPairs};
 const standardRepeatDriftBrightStarLimit = ${standardRepeatDriftBrightStarLimit};
+const trackingCentralFieldRadius = ${trackingCentralFieldRadius};
+const trackingFallbackCentralFieldRadius = ${trackingFallbackCentralFieldRadius};
+const trackingMinimumCentralStars = ${trackingMinimumCentralStars};
+const trackingMediumPeakPercentile = ${trackingMediumPeakPercentile};
+const trackingMinimumGuideStarHfrPx = ${trackingMinimumGuideStarHfrPx};
+const trackingGuideStarHfrPercentile = ${trackingGuideStarHfrPercentile};
 const expertAnalysisMaxDimension = ${expertAnalysisMaxDimension};
 const expertDistributionMaxSamples = ${expertDistributionMaxSamples};
 const expertCloudTileSamples = ${expertCloudTileSamples};
+const expertTrackingTrailStarLimit = ${expertTrackingTrailStarLimit};
+const expertTrackingTrailWindowRadius = ${expertTrackingTrailWindowRadius};
 const expertRepeatDriftMaxPairs = ${expertRepeatDriftMaxPairs};
 const expertRepeatDriftBrightStarLimit = ${expertRepeatDriftBrightStarLimit};
 const analysisModeConfigs = ${JSON.stringify(analysisModeConfigs)};
@@ -6705,6 +7479,15 @@ const bitmapNearSaturationThreshold = ${bitmapNearSaturationThreshold};
 const hardClippingFullPenaltyPercent = ${hardClippingFullPenaltyPercent};
 const nearSaturationFullPenaltyPercent = ${nearSaturationFullPenaltyPercent};
 const nearSaturationPressureWeight = ${nearSaturationPressureWeight};
+const cloudRelativePeerMinimum = ${cloudRelativePeerMinimum};
+const cloudPossibleBackgroundRangePercent = ${cloudPossibleBackgroundRangePercent};
+const cloudPossibleStructureScore = ${cloudPossibleStructureScore};
+const cloudLikelyBackgroundRangePercent = ${cloudLikelyBackgroundRangePercent};
+const cloudLikelyStructureScore = ${cloudLikelyStructureScore};
+const cloudSupportStarLossScore = ${cloudSupportStarLossScore};
+const cloudStrongStarLossScore = ${cloudStrongStarLossScore};
+const cloudSupportMeanLiftScore = ${cloudSupportMeanLiftScore};
+const cloudStrongMeanLiftScore = ${cloudStrongMeanLiftScore};
 
 function getAnalysisMode() {
   return defaultAnalysisMode;
@@ -7299,7 +8082,9 @@ function exportCsv() {
   const separator = getCsvSeparator();
   const header = [
     "file",
+    "calculation_version",
     "analysis_mode",
+    "analysis_pixel_source",
     "frame_type",
     "frame_type_source",
     "filter",
@@ -7391,6 +8176,11 @@ function exportCsv() {
     "tracking_severity",
     "tracking_reason",
     "tracking_score",
+    "tracking_sample_star_count",
+    "tracking_sample_region",
+    "directional_trail_score",
+    "directional_trail_star_fraction",
+    "directional_trail_star_count",
     "repeat_drift_source",
     "repeat_drift_score",
     "repeated_star_fraction",
@@ -7407,7 +8197,9 @@ function exportCsv() {
     const lightOnlyText = (value) => (calibrationFrame ? "skipped" : value || "");
     const row = [
       result.fileName,
+      result.calculationVersion || appVersion,
       resultAnalysisMode(result),
+      result.analysisPixelSource || "",
       result.frameType || unknownFrameTypeName,
       result.frameTypeSource || "None",
       result.filterName || unknownFilterName,
@@ -7507,6 +8299,11 @@ function exportCsv() {
       lightOnlyText(result.trackingSeverity),
       lightOnlyText(result.trackingReason),
       lightOnlyMetric(result.trackingScore, 4),
+      lightOnlyCount(result.trackingSampleStarCount),
+      lightOnlyText(result.trackingSampleRegion),
+      lightOnlyMetric(result.directionalTrailScore, 4),
+      lightOnlyMetric(result.directionalTrailStarFraction, 4),
+      lightOnlyCount(result.directionalTrailStarCount),
       lightOnlyText(result.repeatDriftSource),
       lightOnlyMetric(result.repeatDriftScore, 4),
       lightOnlyMetric(result.repeatedStarFraction, 4),
