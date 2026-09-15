@@ -2,14 +2,14 @@
 
 Updated: 2026-09-14
 
-Current app version: **0.3.5**.
+Current app version: **0.3.6**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
 ## Important Principles
 
 - All analysis happens locally in the browser.
-- FITS scores are measured from linear FITS pixel data, not from the stretched preview.
+- FITS/XISF scores are measured from linear image pixel data, not from the stretched preview.
 - The stretched preview is only for visual inspection.
 - Light frames and calibration frames are scored differently.
 - Light frames are compared within their detected object-shot/filter group where relative comparison is needed.
@@ -23,10 +23,11 @@ This document describes the current measurements, scores, and preview annotation
 
 ### Supported Input
 
-The app accepts common image files plus FITS files:
+The app accepts common image files plus FITS and XISF files:
 
 - Browser image files: JPG, PNG, BMP, GIF, WebP, TIFF.
 - FITS files: `.fit`, `.fits`, `.fts`.
+- XISF files: `.xisf`.
 
 Hidden/system files such as `.DS_Store`, `Thumbs.db`, `__MACOSX`, and macOS `._...` sidecar files are ignored.
 
@@ -61,15 +62,51 @@ While reading FITS pixels, the app also computes the basic full-frame statistics
 
 This avoids scanning the full FITS array multiple times for those core statistics.
 
-### FITS Images, Preview, And Measurement
+### XISF Pixel Reading
 
-FITS frames can be large, so the app keeps separate visual and measurement paths:
+For XISF files, the app reads uncompressed monolithic containers with the `XISF0100` preamble, a UTF-8 XML header, and attached image data referenced by `location="attachment:position:size"`.
 
-- Full-resolution analysis pixels: the original FITS width and height.
+Supported XISF sample formats:
+
+- `UInt8`
+- `Int8`
+- `UInt16`
+- `Int16`
+- `UInt32`
+- `Int32`
+- `Float32`
+- `Float64`
+
+The XML header is used to read:
+
+- image geometry
+- sample format
+- optional bounds
+- byte order
+- embedded `FITSKeyword` metadata
+- common native XISF `Property` aliases for filter, frame type, exposure, camera temperature, target name, RA/DEC, focal length, pixel size, binning, and camera model
+
+Mono XISF data is analysed directly. Colour XISF data is converted to luminance before scoring, using the same luma coefficients as bitmap files.
+
+Compressed XISF data, distributed/external data blocks, complex samples, and 64-bit integer samples are not decoded yet. The app reports those as unsupported instead of attempting a partial or misleading score.
+
+While reading XISF pixels, the app computes the same basic statistics as FITS in the same pass:
+
+- finite pixel count
+- mean
+- standard deviation
+- hard-clipped highlight count
+- near-saturated highlight count
+
+### Linear Astro Images, Preview, And Measurement
+
+FITS and XISF frames can be large, so the app keeps separate visual and measurement paths:
+
+- Full-resolution analysis pixels: the original FITS/XISF width and height.
 - Preview image: longest side up to `1400` pixels.
 - Zoom detail image: longest side up to `6000` pixels.
 
-Preview and zoom images are downsampled only for display. FITS measurements in v0.3.0 use the full-resolution FITS pixel grid in both Standard and Expert modes.
+Preview and zoom images are downsampled only for display. FITS measurements in v0.3.0 and XISF measurements in v0.3.6 use the full-resolution pixel grid in both Standard and Expert modes.
 
 Star candidates are scanned on the full-resolution data. FWHM, HFR, roundness, and eccentricity are then measured only in small local windows around each star candidate, so the app does not run expensive star-shape maths across every pixel.
 
@@ -80,7 +117,7 @@ Expensive whole-frame measurements such as Laplacian sharpness support, local no
 Standard mode preserves the faster current behaviour:
 
 - bitmap analysis longest side up to `1400` pixels
-- FITS measurements use full-resolution pixels
+- FITS/XISF measurements use full-resolution pixels
 - distribution and Flat histogram samples up to `250000` pixels
 - cloud/Flat tile sampling target of `480` pixels per tile
 - Laplacian sharpness support sample target of `900000` pixels
@@ -95,7 +132,7 @@ Standard mode preserves the faster current behaviour:
 Expert mode is intended for borderline or suspicious frames:
 
 - bitmap analysis longest side up to `7000` pixels
-- FITS measurements use full-resolution pixels
+- FITS/XISF measurements use full-resolution pixels
 - distribution and Flat histogram samples up to `1000000` pixels
 - cloud/Flat tile sampling target of `1600` pixels per tile
 - Laplacian sharpness support sample target of `2600000` pixels
@@ -120,7 +157,7 @@ When Web Workers are available, the app sends per-frame measurement work to a lo
 
 The selected count is the lowest of the pending frame count, CPU limit, and memory limit. During analysis, the summary panel shows the auto-selected worker count and whether the memory source was desktop memory, browser memory, browser heap limit, or fallback memory estimate.
 
-Each worker receives the original local file object, reads FITS or bitmap data locally, measures the frame, and sends the measurement result back to the main UI. The main UI then:
+Each worker receives the original local file object, reads FITS, XISF, or bitmap data locally, measures the frame, and sends the measurement result back to the main UI. The main UI then:
 
 - reattaches the original file object for zoom and copy/export workflows
 - regenerates the lossless preview thumbnail
@@ -221,7 +258,7 @@ The app computes the arithmetic mean of all finite grayscale pixels:
 mean = sum(pixel) / finite_pixel_count
 ```
 
-For FITS files, this is in scaled FITS pixel units. For bitmap images, this is in luminance units from `0` to `255`.
+For FITS files, this is in scaled FITS pixel units. For XISF files, this is in the decoded XISF sample units. For bitmap images, this is in luminance units from `0` to `255`.
 
 ### Standard Deviation
 
@@ -254,7 +291,7 @@ Then:
 median_percent = median / saturation_level * 100
 ```
 
-For FITS integer data, `saturation_level` is derived from the high end of the scaled FITS integer range. For bitmap images, the fallback saturation level is `252`.
+For FITS integer data, `saturation_level` is derived from the high end of the scaled FITS integer range. For XISF integer data, it is derived from the sample format range. For XISF floating-point data, it uses the declared XISF `bounds` when present. For bitmap images, the fallback saturation level is `252`.
 
 ### Spread Percent
 
@@ -290,7 +327,7 @@ Star detection is used for:
 - repeat drift
 - zoom star overlay
 
-For FITS files, star detection runs on the full-resolution FITS pixel grid in both Standard and Expert modes. For bitmap files, star detection runs on the selected analysis canvas: up to `1400` pixels on the longest side in Standard mode and up to `7000` pixels in Expert mode.
+For FITS/XISF files, star detection runs on the full-resolution decoded pixel grid in both Standard and Expert modes. For bitmap files, star detection runs on the selected analysis canvas: up to `1400` pixels on the longest side in Standard mode and up to `7000` pixels in Expert mode.
 
 ### Detection Threshold
 
@@ -612,7 +649,7 @@ clipping_threshold = 250
 near_saturation_threshold = 245
 ```
 
-For FITS integer files, these measurements are made from the full-resolution linear FITS data during pixel decoding, before any display downsampling. This matters because display downsampling can average one saturated star core with neighbouring pixels and hide the clipping.
+For FITS integer and XISF files with a known saturation range, these measurements are made from the full-resolution linear data during pixel decoding, before any display downsampling. This matters because display downsampling can average one saturated star core with neighbouring pixels and hide the clipping.
 
 The FITS thresholds are derived from the scaled integer range:
 
@@ -628,7 +665,7 @@ near_saturation_threshold = high - max(abs(BSCALE) * 3, span * 0.005)
 
 So near saturation means roughly the top `0.5%` of the scaled integer range, while hard clipping means pixels essentially at the maximum.
 
-For FITS floating-point data, the clipping and near-saturation thresholds are effectively infinite because there is no fixed integer maximum. This keeps the app from inventing a sensor saturation point for calibrated or floating-point data.
+For FITS floating-point data, the clipping and near-saturation thresholds are effectively infinite because there is no fixed integer maximum. For XISF floating-point data, the declared XISF `bounds` can provide that range, commonly `0:1`; if no usable bounds exist, the app avoids inventing a saturation point.
 
 The clipping score used in final light-frame quality is no longer a simple linear percentage. It uses a pressure curve so small saturated star cores can affect the score:
 
@@ -673,6 +710,8 @@ The app measures two kinds of evidence:
 2. Same-object and same-filter differences from the rest of the batch, especially lost stars and lifted mean brightness.
 
 In v0.3.5, cloud warnings are trained from labelled cloudy and clear batches. Background range plus structure is the warning gate. Star-loss and mean-lift signals strengthen the warning only after that gate is open, because labelled clean frames can still have relative mean lift or star-count differences.
+
+In v0.3.6, XISF files use the same cloud calculation after their linear pixels are decoded.
 
 ### Large-Scale Background Structure
 
@@ -1586,7 +1625,7 @@ score =
     0.14 * gradient_score
 ```
 
-Dark outlier thresholds are sensor-aware. The app reads camera/sensor model metadata from FITS headers such as `INSTRUME`, `CAMERA`, `CCDNAME`, `DETECTOR`, or `SENSOR`, then falls back to the file path. Known low-glow back-illuminated sensors and cameras include `IMX571`, `ASI2600`, `QHY268`, `IMX455`, `ASI6200`, `QHY600`, `IMX533`, `ASI533`, and `QHY533`.
+Dark outlier thresholds are sensor-aware. The app reads camera/sensor model metadata from FITS headers or XISF metadata such as `INSTRUME`, `CAMERA`, `CCDNAME`, `DETECTOR`, or `SENSOR`, then falls back to the file path. Known low-glow back-illuminated sensors and cameras include `IMX571`, `ASI2600`, `QHY268`, `IMX455`, `ASI6200`, `QHY600`, `IMX533`, `ASI533`, and `QHY533`.
 
 Low-glow BSI profile:
 
@@ -1817,7 +1856,7 @@ Warnings:
 
 If either the calibration frame or the light frames have no usable exposure/temperature metadata, the status is `Missing` and the app reports that the match was not verified. Missing metadata is not penalised by itself.
 
-The app detects exposure and temperature from FITS headers first. It falls back to filename/path patterns when possible, including names such as:
+The app detects exposure and temperature from FITS headers or XISF metadata first. It falls back to filename/path patterns when possible, including names such as:
 
 ```text
 -10.00_300.00s
@@ -1877,7 +1916,7 @@ CSV fields:
 - `filter`
 - `filter_source`
 
-For FITS files, the app checks FITS header keywords first:
+For FITS files, the app checks FITS header keywords first. For XISF files, it checks embedded `FITSKeyword` entries and common native `Property` aliases first:
 
 ```text
 FILTER
@@ -1892,7 +1931,7 @@ OPTIC
 FILT
 ```
 
-If no usable FITS filter is found, or if the file is not FITS, it falls back to file and folder names.
+If no usable metadata filter is found, it falls back to file and folder names.
 
 Common normalised filter names:
 
@@ -1950,7 +1989,7 @@ The CSV keeps both these formatted strings and numeric degree values.
 
 ### RA/DEC Reading
 
-For FITS files, the app looks for paired coordinate keywords:
+For FITS/XISF files, the app looks for paired coordinate metadata keys:
 
 ```text
 OBJCTRA / OBJCTDEC
@@ -1982,7 +2021,7 @@ If no usable RA/DEC pair is found, the light frame is assigned to `Unknown Objec
 
 ### Target Name
 
-The app reads friendly target names from FITS keywords such as:
+The app reads friendly target names from FITS keywords or XISF metadata aliases such as:
 
 ```text
 OBJECT
@@ -2051,7 +2090,7 @@ field_width_degrees = pixel_scale_arcsec_per_pixel * image_width_pixels / 3600
 field_height_degrees = pixel_scale_arcsec_per_pixel * image_height_pixels / 3600
 ```
 
-For FITS files, the original FITS dimensions are used for this field-of-view calculation.
+For FITS/XISF files, the original decoded image dimensions are used for this field-of-view calculation.
 
 ### Object-Shot Tolerance
 
@@ -2099,7 +2138,7 @@ CSV fields:
 - `frame_type`
 - `frame_type_source`
 
-For FITS files, the app checks FITS header keywords first:
+For FITS files, the app checks FITS header keywords first. For XISF files, it checks embedded `FITSKeyword` entries and common native `Property` aliases first:
 
 ```text
 IMAGETYP
@@ -2112,7 +2151,7 @@ EXPTYPE
 PICTYPE
 ```
 
-If no usable FITS type is found, or if the file is not FITS, it falls back to file and folder names.
+If no usable metadata type is found, it falls back to file and folder names.
 
 Normalised frame types:
 
@@ -2136,7 +2175,7 @@ CSV fields:
 - `camera_temperature_c`
 - `temperature_source`
 
-For FITS files, exposure is read from the first available keyword:
+For FITS/XISF files, exposure is read from the first available metadata key:
 
 ```text
 EXPTIME
@@ -2167,7 +2206,7 @@ TEMP
 TEMPERAT
 ```
 
-If FITS metadata is missing, the app falls back to file and folder names. It recognizes exposure values ending in `s`, and it recognizes camera temperature immediately before exposure in names like:
+If FITS/XISF metadata is missing, the app falls back to file and folder names. It recognizes exposure values ending in `s`, and it recognizes camera temperature immediately before exposure in names like:
 
 ```text
 -10.00_300.00s
@@ -2185,7 +2224,7 @@ CSV fields:
 - `camera_model_source`
 - `sensor_outlier_profile`
 
-For FITS files, camera or sensor model is read from the first available keyword:
+For FITS/XISF files, camera or sensor model is read from the first available metadata key:
 
 ```text
 INSTRUME
@@ -2200,22 +2239,42 @@ CAMNAME
 IMAGER
 ```
 
-If FITS metadata is missing, the app falls back to file and folder names. It recognizes common model fragments such as `IMX571`, `ASI2600`, and `QHY268`.
+If FITS/XISF metadata is missing, the app falls back to file and folder names. It recognizes common model fragments such as `IMX571`, `ASI2600`, and `QHY268`.
 
 The sensor model currently affects Dark and Dark Flat outlier scoring only. Known low-glow back-illuminated sensors use the `Low-glow BSI` profile; all other or unknown models use the `Generic sensor` profile.
 
 ## Zoom Guide-Star Overlay
 
-For light frames, the zoom overlay shows the guide-star sample used for tracking analysis, not every detected star. Calibration frames disable this overlay because detected peaks in Flats, Darks, Biases, and Dark Flats are not stars.
+For light frames, the zoom overlay shows the central guide-star sample used for tracking analysis plus reliable full-field guide/reference stars for manual inspection, including stars near the corners. It still does not show every detected star. Calibration frames disable this overlay because detected peaks in Flats, Darks, Biases, and Dark Flats are not stars.
 
 Very small or faint detections are excluded from this overlay because their shapes are not reliable enough for guiding diagnosis. They can still contribute to the raw detected star count, but they are not used for tracking/trailing/repeat-drift decisions.
 
+Important separation:
+
+- Tracking severity is still calculated from central big/medium guide stars.
+- The full-field corner stars are visual reference stars for human inspection.
+- A corner reference star can be orange if its local shape is poor; that does not mean it was used to trigger a tracking warning.
+
 Overlay colours:
 
-- Teal/green circles: normal guide-sample stars.
-- Red circles: guide-sample stars that support a `Possible` or `Severe` tracking warning.
+- Teal/green circles: normal guide/reference stars, including reliable full-field stars.
+- Orange circles: reliable corner reference stars with poor local shape, useful for spotting coma, field curvature, tilt, or corrector/collimation behaviour.
+- Red circles: central guide-sample stars that support a `Possible` or `Severe` tracking warning.
 - Yellow circles or links: repeat-drift candidates.
 - White circle: clicked star.
+
+Orange corner reference stars use this visual-only rule:
+
+```text
+outside central 88% radius
+and in a corner zone on both axes
+and one of:
+    roundness < 0.74
+    fwhm_roundness < 0.72
+    axis_ratio > 1.35
+```
+
+This does not change the quality score. It is there to help the user see optical/corner behaviour separately from guiding/tracking behaviour.
 
 A star is marked red only if the frame has a `Possible` or `Severe` tracking warning, the star belongs to the guide-star sample, and one of these stronger local shape rules is true:
 
@@ -2236,7 +2295,7 @@ Clicking a star in the zoom overlay shows:
 - minor/major FWHM
 - roundness
 
-Important note: red stars are not automatically bad, but red is now reserved for real tracking-alert context. In v0.3.4, mild elongation, tiny stars, and telescope-dependent edge/corner effects are deliberately kept out of the warning overlay because they can still produce a decent frame. The suspicious cases are many red guide stars sharing a direction, or red stars connected by yellow repeat-drift links.
+Important note: red stars are not automatically bad, but red is now reserved for real tracking-alert context. The suspicious cases are many red central guide stars sharing a direction, or red stars connected by yellow repeat-drift links. Corner stars were added back to the visual overlay after v0.3.6 so optical edge behaviour can be inspected manually without driving the tracking score. Orange corner stars are a separate optical/corner inspection aid.
 
 ## CSV Columns
 
@@ -2353,21 +2412,21 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.3.5`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.3.6`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
-- `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS` or `bitmap analysis canvas`.
+- `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
-- `frame_type_source`: FITS keyword or file path source.
+- `frame_type_source`: FITS keyword, XISF metadata, or file path source.
 - `filter`: detected filter group.
-- `filter_source`: FITS keyword or file path source.
-- `exposure_seconds`: exposure time detected from FITS header or file path.
+- `filter_source`: FITS keyword, XISF metadata, or file path source.
+- `exposure_seconds`: exposure time detected from FITS/XISF metadata or file path.
 - `exposure_source`: where exposure was detected.
-- `camera_temperature_c`: camera temperature in Celsius detected from FITS header or file path.
+- `camera_temperature_c`: camera temperature in Celsius detected from FITS/XISF metadata or file path.
 - `temperature_source`: where camera temperature was detected.
-- `camera_model`: camera or sensor model detected from FITS header or file path.
+- `camera_model`: camera or sensor model detected from FITS/XISF metadata or file path.
 - `camera_model_source`: where camera/sensor model was detected.
 - `sensor_outlier_profile`: dark-frame outlier profile used for this camera model.
-- `target_name`: friendly target/object name from FITS metadata when available.
+- `target_name`: friendly target/object name from FITS/XISF metadata when available.
 - `target_source`: where the target name was detected.
 - `object_shot`: detected light-frame object-shot group label.
 - `object_shot_key`: internal object-shot group key used for grouping.
@@ -2376,16 +2435,16 @@ Short meanings:
 - `object_shot_tolerance_arcmin`: maximum angular deviation allowed when matching this frame to an object-shot group.
 - `ra_degrees`: detected right ascension in degrees.
 - `ra_hms`: detected right ascension formatted as hours, minutes, and seconds.
-- `ra_source`: FITS keyword used for right ascension.
+- `ra_source`: FITS keyword, XISF metadata, or file path source used for right ascension.
 - `dec_degrees`: detected declination in degrees.
 - `dec_dms`: detected declination formatted as signed degrees, arcminutes, and arcseconds.
-- `dec_source`: FITS keyword used for declination.
+- `dec_source`: FITS keyword, XISF metadata, or file path source used for declination.
 - `focal_length_mm`: detected focal length in millimetres.
-- `focal_length_source`: FITS keyword used for focal length.
+- `focal_length_source`: FITS keyword or XISF metadata used for focal length.
 - `pixel_size_microns`: detected pixel size in microns.
-- `pixel_size_source`: FITS keyword used for pixel size.
+- `pixel_size_source`: FITS keyword or XISF metadata used for pixel size.
 - `binning`: detected average binning value.
-- `binning_source`: FITS keyword or default source for binning.
+- `binning_source`: FITS keyword, XISF metadata, or default source for binning.
 - `pixel_scale_arcsec_per_pixel`: detected or derived pixel scale.
 - `pixel_scale_source`: WCS source or focal-length/pixel-size source for pixel scale.
 - `field_width_degrees`: estimated image field width in degrees.
@@ -2490,7 +2549,8 @@ Short meanings:
 
 ### A Frame With Normal Optical Edge Aberrations Can Have
 
-- Red elongated stars near borders.
+- Elongated-looking stars near borders.
+- Orange corner reference stars in the zoom overlay.
 - Higher eccentricity near edges.
 - No strong repeat-drift links.
 - Often a radial or symmetric pattern.

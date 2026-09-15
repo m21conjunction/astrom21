@@ -93,7 +93,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.3.5";
+const appVersion = "0.3.6";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -258,6 +258,8 @@ const defaultScoreSettings = {
 
 const imageExtensions = new Set(["jpg", "jpeg", "png", "bmp", "gif", "webp", "tif", "tiff"]);
 const fitsExtensions = new Set(["fit", "fits", "fts"]);
+const xisfExtensions = new Set(["xisf"]);
+const xisfMaxHeaderBytes = 32 * 1024 * 1024;
 const previewMaxDimension = 1400;
 const bitmapAnalysisMaxDimension = 1400;
 const standardDistributionMaxSamples = 250000;
@@ -276,6 +278,10 @@ const trackingMinimumCentralStars = 12;
 const trackingMediumPeakPercentile = 0.5;
 const trackingMinimumGuideStarHfrPx = 0.85;
 const trackingGuideStarHfrPercentile = 0.2;
+const cornerReferenceAxisFraction = 0.55;
+const cornerReferenceRoundnessWarningLimit = 0.74;
+const cornerReferenceFwhmRoundnessWarningLimit = 0.72;
+const cornerReferenceAxisRatioWarningLimit = 1.35;
 const expertAnalysisMaxDimension = 7000;
 const expertDistributionMaxSamples = 1000000;
 const expertCloudTileSamples = 1600;
@@ -387,6 +393,18 @@ function isFitsFile(file) {
   return fitsExtensions.has(fileExtension(file.name));
 }
 
+function isXisfFile(file) {
+  return xisfExtensions.has(fileExtension(file.name));
+}
+
+function headerSourcePrefix(header) {
+  return header && header.__SOURCE_FORMAT === "XISF" ? "XISF metadata" : "FITS";
+}
+
+function headerKeywordSource(header, key) {
+  return `${headerSourcePrefix(header)} ${key}`;
+}
+
 function normalizePathText(path) {
   return String(path || "")
     .replace(/\\/g, "/")
@@ -432,6 +450,9 @@ function isSupportedImage(file) {
     return false;
   }
   if (isFitsFile(file)) {
+    return true;
+  }
+  if (isXisfFile(file)) {
     return true;
   }
   if (file.type && file.type.startsWith("image/")) {
@@ -705,7 +726,7 @@ function detectFilterFromHeader(header) {
     if (normalized !== unknownFilterName) {
       return {
         name: normalized,
-        source: `FITS ${key}`
+        source: headerKeywordSource(header, key)
       };
     }
   }
@@ -829,7 +850,7 @@ function detectFrameTypeFromHeader(header) {
     if (normalized !== unknownFrameTypeName) {
       return {
         name: normalized,
-        source: `FITS ${key}`
+        source: headerKeywordSource(header, key)
       };
     }
   }
@@ -903,7 +924,7 @@ function detectNumericMetadataFromHeader(header, keys) {
     if (Number.isFinite(value)) {
       return {
         value,
-        source: `FITS ${key}`
+        source: headerKeywordSource(header, key)
       };
     }
   }
@@ -929,7 +950,7 @@ function detectTextMetadataFromHeader(header, keys) {
     if (value) {
       return {
         value,
-        source: `FITS ${key}`
+        source: headerKeywordSource(header, key)
       };
     }
   }
@@ -1141,8 +1162,8 @@ function detectCoordinatesFromHeader(header) {
       return {
         raDegrees,
         decDegrees,
-        raSource: `FITS ${pair.raKey}`,
-        decSource: `FITS ${pair.decKey}`
+        raSource: headerKeywordSource(header, pair.raKey),
+        decSource: headerKeywordSource(header, pair.decKey)
       };
     }
   }
@@ -1186,7 +1207,7 @@ function detectPixelSizeForFile(file, header = null) {
       if (Number.isFinite(value)) {
         return {
           value,
-          source: `FITS ${xKey}/${yKey}`
+          source: headerKeywordSource(header, `${xKey}/${yKey}`)
         };
       }
     }
@@ -1224,7 +1245,7 @@ function detectBinningForFile(file, header = null) {
       if (Number.isFinite(value)) {
         return {
           value,
-          source: `FITS ${xKey}/${yKey}`
+          source: headerKeywordSource(header, `${xKey}/${yKey}`)
         };
       }
     }
@@ -1237,7 +1258,7 @@ function detectBinningForFile(file, header = null) {
       if (Number.isFinite(value)) {
         return {
           value,
-          source: `FITS ${key}`
+          source: headerKeywordSource(header, key)
         };
       }
     }
@@ -1257,7 +1278,7 @@ function detectWcsPixelScaleFromHeader(header) {
   if (Number.isFinite(cdeltScale) && cdeltScale > 0 && cdeltScale < 1) {
     return {
       value: cdeltScale * 3600,
-      source: "FITS CDELT"
+      source: headerKeywordSource(header, "CDELT")
     };
   }
 
@@ -1271,7 +1292,7 @@ function detectWcsPixelScaleFromHeader(header) {
   if (Number.isFinite(cdScale) && cdScale > 0 && cdScale < 1) {
     return {
       value: cdScale * 3600,
-      source: "FITS CD matrix"
+      source: headerKeywordSource(header, "CD matrix")
     };
   }
 
@@ -2849,6 +2870,40 @@ function normalizedStarFieldRadius(star, width, height) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function normalizedStarCornerAxes(star, width, height) {
+  const halfWidth = Math.max(width / 2, 1);
+  const halfHeight = Math.max(height / 2, 1);
+  return {
+    dx: Math.abs((star.x - width / 2) / halfWidth),
+    dy: Math.abs((star.y - height / 2) / halfHeight)
+  };
+}
+
+function starInCornerReferenceZone(star, width, height) {
+  const radius = normalizedStarFieldRadius(star, width, height);
+  const axes = normalizedStarCornerAxes(star, width, height);
+  return (
+    radius > trackingFallbackCentralFieldRadius &&
+    axes.dx >= cornerReferenceAxisFraction &&
+    axes.dy >= cornerReferenceAxisFraction
+  );
+}
+
+function starLooksPoorInCorner(star, width, height) {
+  if (!starInCornerReferenceZone(star, width, height)) {
+    return false;
+  }
+
+  const roundness = Number.isFinite(star.roundness) ? star.roundness : 1;
+  const fwhmRoundness = Number.isFinite(star.fwhmRoundness) ? star.fwhmRoundness : roundness;
+  const axisRatio = Number.isFinite(star.axisRatio) ? star.axisRatio : 1;
+  return (
+    roundness < cornerReferenceRoundnessWarningLimit ||
+    fwhmRoundness < cornerReferenceFwhmRoundnessWarningLimit ||
+    axisRatio > cornerReferenceAxisRatioWarningLimit
+  );
+}
+
 function trackingRegionLabel(radius) {
   if (!Number.isFinite(radius)) {
     return "unknown";
@@ -3330,6 +3385,27 @@ function selectStarsForOverlay(stars, repeatedStarIds, limit, trackingStarIds = 
   return priorityStars.slice(0, safeLimit).sort((a, b) => a.id - b.id);
 }
 
+function mergeUniqueStars(...groups) {
+  const merged = [];
+  const seen = new Set();
+  for (const group of groups) {
+    for (const star of group || []) {
+      if (!star || seen.has(star.id)) {
+        continue;
+      }
+      seen.add(star.id);
+      merged.push(star);
+    }
+  }
+  return merged;
+}
+
+function selectStarsForFullFieldOverlay(stars, trackingStars, repeatedStarIds, limit, trackingStarIds, trackingAlert) {
+  const fullFieldGuideStars = reliableGuideStars(stars, trackingMinimumCentralStars);
+  const overlayPool = mergeUniqueStars(trackingStars, fullFieldGuideStars);
+  return selectStarsForOverlay(overlayPool, repeatedStarIds, limit, trackingStarIds, trackingAlert);
+}
+
 function computeStarRoundnessAndTracking(gray, width, height, mean, std, options = {}) {
   const metricScale = Number.isFinite(options.metricScale) && options.metricScale > 0 ? options.metricScale : 1;
   const repeatDistanceScale =
@@ -3713,7 +3789,8 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
   const repeatedStarIds = new Set(repeatDrift.repeatStarIndexes || []);
   const trackingStarIds = new Set(trackingStars.map((star) => star.id));
   const trackingAlert = trackingSeverity === "Possible" || trackingSeverity === "Severe";
-  const overlayStars = selectStarsForOverlay(
+  const overlayStars = selectStarsForFullFieldOverlay(
+    stars,
     trackingStars,
     repeatedStarIds,
     starOverlayLimit,
@@ -3737,6 +3814,7 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
       angle: starTrackingAngle(star),
       trackingSample: trackingStarIds.has(star.id),
       elongated: trackingAlert && trackingStarIds.has(star.id) && starLooksElongated(star),
+      cornerIssue: !trackingStarIds.has(star.id) && starLooksPoorInCorner(star, width, height),
       repeated: repeatedStarIds.has(star.id)
     })),
     repeatPairs: (repeatDrift.repeatPairs || []).filter(
@@ -6069,7 +6147,8 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
       Number.isFinite(star.trailAxisRatio) && star.trailAxisRatio > 1.25
         ? `, trail ratio ${formatMetric(star.trailAxisRatio, 2)}`
         : "";
-    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%${trailText}`;
+    const cornerText = star.cornerIssue ? ", corner shape warning" : "";
+    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%${trailText}${cornerText}`;
     return;
   }
   if (fallbackStatus) {
@@ -6105,8 +6184,8 @@ function updateStarOverlayButton() {
   zoomStarOverlayBtn.classList.toggle("active", supported && state.starOverlayActive);
   zoomStarOverlayBtn.setAttribute("aria-pressed", String(supported && state.starOverlayActive));
   zoomStarOverlayBtn.title = supported
-    ? "Show guide-star sample"
-    : "Guide-star overlay is only available for light frames";
+    ? "Show guide and reference stars"
+    : "Star overlay is only available for light frames";
 }
 
 function drawZoomStarOverlay() {
@@ -6188,14 +6267,16 @@ function drawZoomStarOverlay() {
   const manyStars = stars.length > 7000;
   for (const star of stars) {
     const selected = star.id === state.selectedOverlayStarId;
-    const radius = selected ? 7 : star.repeated ? 4.8 : star.elongated ? 4 : manyStars ? 2 : 2.8;
+    const radius = selected ? 7 : star.repeated ? 4.8 : star.elongated ? 4 : star.cornerIssue ? 3.6 : manyStars ? 2 : 2.8;
     context.strokeStyle = selected
       ? "rgba(255, 255, 255, 0.98)"
       : star.repeated
         ? "rgba(250, 204, 21, 0.92)"
         : star.elongated
           ? "rgba(248, 113, 113, 0.88)"
-          : "rgba(45, 212, 191, 0.72)";
+          : star.cornerIssue
+            ? "rgba(251, 146, 60, 0.94)"
+            : "rgba(45, 212, 191, 0.72)";
     context.lineWidth = selected ? 2.2 : 1.2;
     context.beginPath();
     context.arc(star.x * cssWidth, star.y * cssHeight, radius, 0, Math.PI * 2);
@@ -6744,6 +6825,401 @@ function fitsSaturationLevels(bitpix, bscale, bzero) {
   };
 }
 
+function decodeXmlEntities(value) {
+  return String(value ?? "")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal) => String.fromCodePoint(Number.parseInt(decimal, 10)))
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function parseXmlAttributes(attributeText) {
+  const attributes = {};
+  const pattern = /([A-Za-z_][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  let match = pattern.exec(attributeText || "");
+  while (match) {
+    attributes[match[1]] = decodeXmlEntities(match[2] !== undefined ? match[2] : match[3]);
+    match = pattern.exec(attributeText || "");
+  }
+  return attributes;
+}
+
+function xmlAttribute(attributes, name) {
+  if (!attributes) {
+    return "";
+  }
+  if (Object.prototype.hasOwnProperty.call(attributes, name)) {
+    return attributes[name];
+  }
+  const lowerName = name.toLowerCase();
+  for (const key of Object.keys(attributes)) {
+    if (key.toLowerCase() === lowerName) {
+      return attributes[key];
+    }
+  }
+  return "";
+}
+
+function stripXmlTags(value) {
+  return decodeXmlEntities(String(value || "").replace(/<[^>]*>/g, "").trim());
+}
+
+function findXisfImageDescriptors(xmlText) {
+  const descriptors = [];
+  const pattern = /<(?:(?:[A-Za-z_][\w.-]*):)?Image\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:(?:[A-Za-z_][\w.-]*):)?Image>)/gi;
+  let match = pattern.exec(xmlText || "");
+  while (match) {
+    descriptors.push({
+      xml: match[0],
+      body: match[2] || "",
+      attributes: parseXmlAttributes(match[1] || "")
+    });
+    match = pattern.exec(xmlText || "");
+  }
+  return descriptors;
+}
+
+function parseXisfGeometry(geometryText) {
+  const parts = String(geometryText || "")
+    .split(":")
+    .map((part) => Math.trunc(Number(part.trim())));
+  const width = parts[0];
+  const height = parts[1];
+  const channels = parts[2] || 1;
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    !Number.isFinite(channels) ||
+    width <= 0 ||
+    height <= 0 ||
+    channels <= 0
+  ) {
+    throw new Error("XISF image geometry is missing or invalid.");
+  }
+  return { width, height, channels };
+}
+
+function parseXisfLocation(locationText) {
+  const parts = String(locationText || "").split(":");
+  if (parts.length < 3 || parts[0].toLowerCase() !== "attachment") {
+    throw new Error("Only monolithic XISF files with attached image data are supported.");
+  }
+  const position = Math.trunc(Number(parts[1]));
+  const size = Math.trunc(Number(parts[2]));
+  if (!Number.isFinite(position) || !Number.isFinite(size) || position < 0 || size <= 0) {
+    throw new Error("XISF image attachment location is invalid.");
+  }
+  return { position, size };
+}
+
+function xisfSampleFormatInfo(sampleFormat) {
+  const normalized = String(sampleFormat || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, "");
+  const formats = {
+    uint8: { kind: "uint", bits: 8, bytes: 1 },
+    int8: { kind: "int", bits: 8, bytes: 1 },
+    uint16: { kind: "uint", bits: 16, bytes: 2 },
+    int16: { kind: "int", bits: 16, bytes: 2 },
+    uint32: { kind: "uint", bits: 32, bytes: 4 },
+    int32: { kind: "int", bits: 32, bytes: 4 },
+    float32: { kind: "float", bits: 32, bytes: 4 },
+    real32: { kind: "float", bits: 32, bytes: 4 },
+    float64: { kind: "float", bits: 64, bytes: 8 },
+    real64: { kind: "float", bits: 64, bytes: 8 }
+  };
+  const info = formats[normalized];
+  if (!info) {
+    if (normalized === "uint64" || normalized === "int64") {
+      throw new Error("64-bit integer XISF images are not supported in this browser.");
+    }
+    throw new Error(`Unsupported XISF sample format ${sampleFormat || "(missing)"}.`);
+  }
+  return { ...info, name: sampleFormat };
+}
+
+function parseXisfBounds(boundsText) {
+  if (!boundsText) {
+    return null;
+  }
+  const parts = String(boundsText)
+    .split(":")
+    .map((part) => Number(part.trim()));
+  if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1]) || parts[1] <= parts[0]) {
+    return null;
+  }
+  return { low: parts[0], high: parts[1] };
+}
+
+function xisfIntegerSampleRange(formatInfo) {
+  if (!formatInfo || formatInfo.kind === "float") {
+    return null;
+  }
+  if (formatInfo.kind === "uint") {
+    return {
+      low: 0,
+      high: Math.pow(2, formatInfo.bits) - 1
+    };
+  }
+  return {
+    low: -Math.pow(2, formatInfo.bits - 1),
+    high: Math.pow(2, formatInfo.bits - 1) - 1
+  };
+}
+
+function xisfSaturationLevels(formatInfo, bounds) {
+  const range = formatInfo && formatInfo.kind === "float" ? bounds : xisfIntegerSampleRange(formatInfo);
+  if (!range || !Number.isFinite(range.high) || !Number.isFinite(range.low) || range.high <= range.low) {
+    return {
+      low: Number.NEGATIVE_INFINITY,
+      high: Number.POSITIVE_INFINITY,
+      clippingThreshold: Number.POSITIVE_INFINITY,
+      nearSaturationThreshold: Number.POSITIVE_INFINITY
+    };
+  }
+
+  const span = Math.max(range.high - range.low, 1e-12);
+  const unit = formatInfo.kind === "float" ? span * 0.000001 : 3;
+  return {
+    low: range.low,
+    high: range.high,
+    clippingThreshold: range.high - Math.max(unit, span * 0.00001),
+    nearSaturationThreshold: range.high - Math.max(unit, span * 0.005)
+  };
+}
+
+function readXisfSample(dataView, byteOffset, formatInfo, littleEndian) {
+  if (formatInfo.kind === "uint") {
+    if (formatInfo.bits === 8) {
+      return dataView.getUint8(byteOffset);
+    }
+    if (formatInfo.bits === 16) {
+      return dataView.getUint16(byteOffset, littleEndian);
+    }
+    if (formatInfo.bits === 32) {
+      return dataView.getUint32(byteOffset, littleEndian);
+    }
+  }
+  if (formatInfo.kind === "int") {
+    if (formatInfo.bits === 8) {
+      return dataView.getInt8(byteOffset);
+    }
+    if (formatInfo.bits === 16) {
+      return dataView.getInt16(byteOffset, littleEndian);
+    }
+    if (formatInfo.bits === 32) {
+      return dataView.getInt32(byteOffset, littleEndian);
+    }
+  }
+  if (formatInfo.kind === "float") {
+    if (formatInfo.bits === 32) {
+      return dataView.getFloat32(byteOffset, littleEndian);
+    }
+    if (formatInfo.bits === 64) {
+      return dataView.getFloat64(byteOffset, littleEndian);
+    }
+  }
+  throw new Error(`Unsupported XISF sample format ${formatInfo.name || ""}.`);
+}
+
+function parseXisfFITSKeywords(xmlText, header) {
+  const pattern = /<(?:(?:[A-Za-z_][\w.-]*):)?FITSKeyword\b([^>]*?)\/?>/gi;
+  let match = pattern.exec(xmlText || "");
+  while (match) {
+    const attributes = parseXmlAttributes(match[1] || "");
+    const name = cleanFilterName(xmlAttribute(attributes, "name")).toUpperCase();
+    if (!name) {
+      match = pattern.exec(xmlText || "");
+      continue;
+    }
+    const rawValue = xmlAttribute(attributes, "value");
+    const value = rawValue === "" ? "" : parseFitsValue(rawValue);
+    if (!Object.prototype.hasOwnProperty.call(header, name)) {
+      header[name] = value;
+    }
+    match = pattern.exec(xmlText || "");
+  }
+}
+
+function setXisfHeaderAlias(header, key, value) {
+  if (value === null || value === undefined || value === "") {
+    return;
+  }
+  if (!Object.prototype.hasOwnProperty.call(header, key)) {
+    header[key] = value;
+  }
+}
+
+function xisfFocalLengthMillimeters(value) {
+  const numeric = numericMetadataValue(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return value;
+  }
+  return numeric <= 20 ? numeric * 1000 : numeric;
+}
+
+function xisfPixelSizeMicrons(value) {
+  const numeric = numericMetadataValue(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return value;
+  }
+  return numeric < 0.1 ? numeric * 1000000 : numeric;
+}
+
+function addXisfPropertyAlias(header, id, value) {
+  const segments = String(id || "")
+    .toLowerCase()
+    .split(/[:./_\s-]+/)
+    .filter(Boolean);
+  const compact = segments.join("");
+  const last = segments[segments.length - 1] || "";
+  const hasSegment = (segment) => segments.includes(segment);
+
+  if (hasSegment("filter") && (last === "name" || last === "filter" || compact.includes("filtername"))) {
+    setXisfHeaderAlias(header, "FILTER", value);
+  }
+  if ((hasSegment("object") || hasSegment("target")) && (last === "name" || last === "object" || last === "target")) {
+    setXisfHeaderAlias(header, "OBJECT", value);
+  }
+  if (last === "ra" || last === "rightascension" || compact.endsWith("centerra")) {
+    setXisfHeaderAlias(header, "RA", value);
+  }
+  if (last === "dec" || last === "declination" || compact.endsWith("centerdec")) {
+    setXisfHeaderAlias(header, "DEC", value);
+  }
+  if (compact.includes("focallength")) {
+    setXisfHeaderAlias(header, "FOCALLEN", xisfFocalLengthMillimeters(value));
+  }
+  if (compact.includes("pixelsize") || compact.includes("pixelpitch")) {
+    setXisfHeaderAlias(header, "PIXSIZE", xisfPixelSizeMicrons(value));
+  }
+  if (compact.includes("exposuretime") || last === "exposure") {
+    setXisfHeaderAlias(header, "EXPTIME", value);
+  }
+  if (compact.includes("binning")) {
+    setXisfHeaderAlias(header, "BINNING", value);
+  }
+  if (
+    compact.includes("temperature") &&
+    (hasSegment("camera") || hasSegment("sensor") || hasSegment("ccd") || hasSegment("detector"))
+  ) {
+    setXisfHeaderAlias(header, "CCD-TEMP", value);
+  }
+  if (
+    (hasSegment("camera") || hasSegment("sensor") || hasSegment("detector") || hasSegment("ccd")) &&
+    (last === "model" || last === "name")
+  ) {
+    setXisfHeaderAlias(header, "CAMERA", value);
+  }
+  if ((hasSegment("frame") || hasSegment("image")) && (last === "type" || last === "kind")) {
+    setXisfHeaderAlias(header, "IMAGETYP", value);
+  }
+}
+
+function parseXisfPropertyValue(rawValue, type) {
+  const text = decodeXmlEntities(rawValue).trim();
+  if (!text) {
+    return "";
+  }
+  const normalizedType = String(type || "").toLowerCase();
+  if (normalizedType.includes("string") || normalizedType.includes("time")) {
+    return text;
+  }
+  if (/^(true|false)$/i.test(text)) {
+    return /^true$/i.test(text);
+  }
+  const numeric = Number(text.replace(/[dD]/g, "E"));
+  return Number.isFinite(numeric) ? numeric : text;
+}
+
+function parseXisfProperties(xmlText, header) {
+  const pattern = /<(?:(?:[A-Za-z_][\w.-]*):)?Property\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:(?:[A-Za-z_][\w.-]*):)?Property>)/gi;
+  let match = pattern.exec(xmlText || "");
+  while (match) {
+    const attributes = parseXmlAttributes(match[1] || "");
+    const id = cleanFilterName(xmlAttribute(attributes, "id"));
+    if (!id) {
+      match = pattern.exec(xmlText || "");
+      continue;
+    }
+    const rawValue = xmlAttribute(attributes, "value") || stripXmlTags(match[2] || "");
+    const value = parseXisfPropertyValue(rawValue, xmlAttribute(attributes, "type"));
+    setXisfHeaderAlias(header, id, value);
+    addXisfPropertyAlias(header, id, value);
+    match = pattern.exec(xmlText || "");
+  }
+}
+
+function parseXisfHeader(bytes, buffer) {
+  if (bytes.length < 16) {
+    throw new Error("Invalid XISF file: missing preamble.");
+  }
+
+  const asciiDecoder = new TextDecoder("ascii");
+  const signature = asciiDecoder.decode(bytes.subarray(0, 8));
+  if (signature !== "XISF0100") {
+    throw new Error("Invalid XISF file: bad signature.");
+  }
+
+  const dataView = new DataView(buffer);
+  const headerLength = dataView.getUint32(8, true);
+  if (!Number.isFinite(headerLength) || headerLength <= 0 || headerLength > xisfMaxHeaderBytes) {
+    throw new Error("Invalid XISF file: XML header length is unreasonable.");
+  }
+  if (16 + headerLength > bytes.length) {
+    throw new Error("Invalid XISF file: XML header is truncated.");
+  }
+
+  const xml = new TextDecoder("utf-8").decode(bytes.subarray(16, 16 + headerLength));
+  const imageDescriptors = findXisfImageDescriptors(xml);
+  const image = imageDescriptors.find((descriptor) => {
+    const location = xmlAttribute(descriptor.attributes, "location");
+    return /^attachment:/i.test(location) && xmlAttribute(descriptor.attributes, "geometry");
+  });
+  if (!image) {
+    throw new Error("XISF file does not contain a supported attached image.");
+  }
+
+  const compression = cleanFilterName(xmlAttribute(image.attributes, "compression"));
+  if (compression && !/^(none|uncompressed)$/i.test(compression)) {
+    throw new Error(`Compressed XISF image data (${compression}) is not supported yet.`);
+  }
+
+  const geometry = parseXisfGeometry(xmlAttribute(image.attributes, "geometry"));
+  const location = parseXisfLocation(xmlAttribute(image.attributes, "location"));
+  const sampleFormat = xisfSampleFormatInfo(xmlAttribute(image.attributes, "sampleFormat"));
+  const bounds = parseXisfBounds(xmlAttribute(image.attributes, "bounds"));
+  const byteOrder = cleanFilterName(xmlAttribute(image.attributes, "byteOrder")).toLowerCase();
+  const littleEndian = !byteOrder || byteOrder.includes("little") || byteOrder === "lsb";
+  if (byteOrder && !littleEndian && !byteOrder.includes("big") && byteOrder !== "msb") {
+    throw new Error(`Unsupported XISF byte order ${byteOrder}.`);
+  }
+  const header = { __SOURCE_FORMAT: "XISF" };
+
+  parseXisfFITSKeywords(image.xml, header);
+  if (Object.keys(header).length <= 1) {
+    parseXisfFITSKeywords(xml, header);
+  }
+  parseXisfProperties(xml, header);
+  header.NAXIS = Math.max(2, geometry.channels > 1 ? 3 : 2);
+  header.NAXIS1 = geometry.width;
+  header.NAXIS2 = geometry.height;
+  header.NAXIS3 = geometry.channels;
+
+  return {
+    header,
+    geometry,
+    location,
+    sampleFormat,
+    bounds,
+    littleEndian
+  };
+}
+
 function downsampleFloatImage(source, sourceWidth, sourceHeight, maxDimension = 1400) {
   const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
   const width = Math.max(16, Math.round(sourceWidth * scale));
@@ -7269,6 +7745,107 @@ async function readFitsFrame(file) {
   };
 }
 
+async function readXisfFrame(file) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const descriptor = parseXisfHeader(bytes, buffer);
+  const { width, height, channels } = descriptor.geometry;
+  const framePixelCount = width * height;
+  const expectedBytes = framePixelCount * channels * descriptor.sampleFormat.bytes;
+  const dataStart = descriptor.location.position;
+  const dataEnd = dataStart + expectedBytes;
+
+  if (descriptor.location.size < expectedBytes || dataEnd > buffer.byteLength) {
+    throw new Error("XISF image data section is truncated.");
+  }
+
+  const saturationLevels = xisfSaturationLevels(descriptor.sampleFormat, descriptor.bounds);
+  const hardThreshold = Number.isFinite(saturationLevels.clippingThreshold)
+    ? saturationLevels.clippingThreshold
+    : Number.POSITIVE_INFINITY;
+  const nearThreshold = Number.isFinite(saturationLevels.nearSaturationThreshold)
+    ? Math.min(saturationLevels.nearSaturationThreshold, hardThreshold)
+    : hardThreshold;
+
+  const dataView = new DataView(buffer);
+  const rawGray = new Float32Array(framePixelCount);
+  let byteOffset = dataStart;
+  let mean = 0;
+  let m2 = 0;
+  let finitePixels = 0;
+  let clippedHighlights = 0;
+  let nearSaturatedHighlights = 0;
+
+  for (let i = 0; i < framePixelCount; i += 1) {
+    let channel0 = NaN;
+    let channel1 = NaN;
+    let channel2 = NaN;
+    let channelSum = 0;
+    let channelCount = 0;
+
+    for (let channel = 0; channel < channels; channel += 1) {
+      const sample = readXisfSample(dataView, byteOffset, descriptor.sampleFormat, descriptor.littleEndian);
+      byteOffset += descriptor.sampleFormat.bytes;
+      if (channel === 0) {
+        channel0 = sample;
+      } else if (channel === 1) {
+        channel1 = sample;
+      } else if (channel === 2) {
+        channel2 = sample;
+      }
+      if (Number.isFinite(sample)) {
+        channelSum += sample;
+        channelCount += 1;
+      }
+    }
+
+    const scaled =
+      channels >= 3 && Number.isFinite(channel0) && Number.isFinite(channel1) && Number.isFinite(channel2)
+        ? 0.2126 * channel0 + 0.7152 * channel1 + 0.0722 * channel2
+        : channelCount > 0
+          ? channelSum / channelCount
+          : NaN;
+    rawGray[i] = scaled;
+    if (!Number.isFinite(scaled)) {
+      continue;
+    }
+
+    finitePixels += 1;
+    const delta = scaled - mean;
+    mean += delta / finitePixels;
+    const delta2 = scaled - mean;
+    m2 += delta * delta2;
+
+    if (scaled >= hardThreshold) {
+      clippedHighlights += 1;
+    }
+    if (scaled >= nearThreshold) {
+      nearSaturatedHighlights += 1;
+    }
+  }
+
+  const variance = finitePixels > 1 ? m2 / (finitePixels - 1) : 0;
+  const basicStats = {
+    mean,
+    std: Math.sqrt(Math.max(variance, 0)),
+    finitePixels,
+    clippedHighlights,
+    nearSaturatedHighlights,
+    clippingStats: clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights)
+  };
+
+  return {
+    rawGray,
+    width,
+    height,
+    header: descriptor.header,
+    sampleFormat: descriptor.sampleFormat.name,
+    saturationLevels,
+    basicStats,
+    clippingStats: basicStats.clippingStats
+  };
+}
+
 async function analyzeFitsImageFile(file, analysisMode = getAnalysisMode(), analysisConfig = getAnalysisModeConfig(analysisMode)) {
   const { rawGray, width, height, header, saturationLevels, basicStats, clippingStats } = await readFitsFrame(file);
   const previewImage = downsampleFloatImage(rawGray, width, height, previewMaxDimension);
@@ -7300,9 +7877,43 @@ async function analyzeFitsImageFile(file, analysisMode = getAnalysisMode(), anal
   });
 }
 
+async function analyzeXisfImageFile(file, analysisMode = getAnalysisMode(), analysisConfig = getAnalysisModeConfig(analysisMode)) {
+  const { rawGray, width, height, header, saturationLevels, basicStats, clippingStats } = await readXisfFrame(file);
+  const previewImage = downsampleFloatImage(rawGray, width, height, previewMaxDimension);
+  const oldPreviewScale = Math.min(1, previewMaxDimension / Math.max(width, height));
+  const saturationThreshold = saturationLevels.clippingThreshold;
+  const repeatDistanceScale = oldPreviewScale > 0 ? 1 / oldPreviewScale : 1;
+  const previewSource = {
+    kind: "gray",
+    width: previewImage.width,
+    height: previewImage.height,
+    data: new Float32Array(previewImage.gray)
+  };
+  return buildAnalysisResult(file, rawGray, width, height, previewSource, {
+    analysisMode,
+    analysisConfig,
+    fullWidth: width,
+    fullHeight: height,
+    analysisPixelSource: "full-resolution XISF",
+    metricScale: 1,
+    repeatDistanceScale,
+    saturationThreshold,
+    clippingThreshold: saturationThreshold,
+    nearSaturationThreshold: saturationLevels.nearSaturationThreshold,
+    basicStats,
+    clippingStats,
+    header,
+    filterInfo: detectFilterForFile(file, header),
+    frameTypeInfo: detectFrameTypeForFile(file, header)
+  });
+}
+
 async function analyzeImageFile(file, analysisMode = getAnalysisMode(), analysisConfig = getAnalysisModeConfig(analysisMode)) {
   if (isFitsFile(file)) {
     return analyzeFitsImageFile(file, analysisMode, analysisConfig);
+  }
+  if (isXisfFile(file)) {
+    return analyzeXisfImageFile(file, analysisMode, analysisConfig);
   }
   return analyzeBitmapImageFile(file, analysisMode, analysisConfig);
 }
@@ -7320,6 +7931,9 @@ function analysisWorkerFunctionSource() {
     clamp,
     fileExtension,
     isFitsFile,
+    isXisfFile,
+    headerSourcePrefix,
+    headerKeywordSource,
     normalizePathText,
     rawRelativeFilePath,
     normalizedFilePath,
@@ -7397,7 +8011,12 @@ function analysisWorkerFunctionSource() {
     starHasDirectionalTrailShape,
     starLooksElongated,
     computeDirectionalTrailMetrics,
+    normalizedStarCornerAxes,
+    starInCornerReferenceZone,
+    starLooksPoorInCorner,
     selectStarsForOverlay,
+    mergeUniqueStars,
+    selectStarsForFullFieldOverlay,
     computeStarRoundnessAndTracking,
     computeHighlightClipping,
     computeDistributionStats,
@@ -7411,11 +8030,33 @@ function analysisWorkerFunctionSource() {
     readFitsPixel,
     fitsIntegerRawRange,
     fitsSaturationLevels,
+    decodeXmlEntities,
+    parseXmlAttributes,
+    xmlAttribute,
+    stripXmlTags,
+    findXisfImageDescriptors,
+    parseXisfGeometry,
+    parseXisfLocation,
+    xisfSampleFormatInfo,
+    parseXisfBounds,
+    xisfIntegerSampleRange,
+    xisfSaturationLevels,
+    readXisfSample,
+    parseXisfFITSKeywords,
+    setXisfHeaderAlias,
+    xisfFocalLengthMillimeters,
+    xisfPixelSizeMicrons,
+    addXisfPropertyAlias,
+    parseXisfPropertyValue,
+    parseXisfProperties,
+    parseXisfHeader,
     downsampleFloatImage,
     buildAnalysisResult,
     analyzeBitmapImageFile,
     readFitsFrame,
     analyzeFitsImageFile,
+    readXisfFrame,
+    analyzeXisfImageFile,
     analyzeImageFile
   ]
     .map((fn) => fn.toString())
@@ -7452,6 +8093,8 @@ const objectShotFovToleranceFraction = ${objectShotFovToleranceFraction};
 const lowGlowBackIlluminatedCameraPatterns = [${lowGlowBackIlluminatedCameraPatterns.map((pattern) => pattern.toString()).join(",")}];
 const calibrationFrameTypes = new Set(${JSON.stringify(Array.from(calibrationFrameTypes))});
 const fitsExtensions = new Set(${JSON.stringify(Array.from(fitsExtensions))});
+const xisfExtensions = new Set(${JSON.stringify(Array.from(xisfExtensions))});
+const xisfMaxHeaderBytes = ${xisfMaxHeaderBytes};
 const previewMaxDimension = ${previewMaxDimension};
 const bitmapAnalysisMaxDimension = ${bitmapAnalysisMaxDimension};
 const standardDistributionMaxSamples = ${standardDistributionMaxSamples};
@@ -7466,6 +8109,10 @@ const trackingMinimumCentralStars = ${trackingMinimumCentralStars};
 const trackingMediumPeakPercentile = ${trackingMediumPeakPercentile};
 const trackingMinimumGuideStarHfrPx = ${trackingMinimumGuideStarHfrPx};
 const trackingGuideStarHfrPercentile = ${trackingGuideStarHfrPercentile};
+const cornerReferenceAxisFraction = ${cornerReferenceAxisFraction};
+const cornerReferenceRoundnessWarningLimit = ${cornerReferenceRoundnessWarningLimit};
+const cornerReferenceFwhmRoundnessWarningLimit = ${cornerReferenceFwhmRoundnessWarningLimit};
+const cornerReferenceAxisRatioWarningLimit = ${cornerReferenceAxisRatioWarningLimit};
 const expertAnalysisMaxDimension = ${expertAnalysisMaxDimension};
 const expertDistributionMaxSamples = ${expertDistributionMaxSamples};
 const expertCloudTileSamples = ${expertCloudTileSamples};
@@ -7919,6 +8566,12 @@ async function zoomCanvasForFitsFile(file) {
   return stretchedGrayscaleCanvasFromData(zoomImage.gray, zoomImage.width, zoomImage.height);
 }
 
+async function zoomCanvasForXisfFile(file) {
+  const { rawGray, width, height } = await readXisfFrame(file);
+  const zoomImage = downsampleFloatImage(rawGray, width, height, zoomDetailMaxDimension);
+  return stretchedGrayscaleCanvasFromData(zoomImage.gray, zoomImage.width, zoomImage.height);
+}
+
 async function zoomCanvasForBitmapFile(file) {
   const bitmap = await createImageBitmap(file);
   const { canvas, ctx, width, height } = prepareCanvas(bitmap, zoomDetailMaxDimension);
@@ -7931,9 +8584,14 @@ async function zoomCanvasForBitmapFile(file) {
 }
 
 async function buildZoomDetailDataUrl(result) {
-  const canvas = isFitsFile(result.sourceFile)
-    ? await zoomCanvasForFitsFile(result.sourceFile)
-    : await zoomCanvasForBitmapFile(result.sourceFile);
+  let canvas = null;
+  if (isFitsFile(result.sourceFile)) {
+    canvas = await zoomCanvasForFitsFile(result.sourceFile);
+  } else if (isXisfFile(result.sourceFile)) {
+    canvas = await zoomCanvasForXisfFile(result.sourceFile);
+  } else {
+    canvas = await zoomCanvasForBitmapFile(result.sourceFile);
+  }
   return canvas.toDataURL("image/png");
 }
 

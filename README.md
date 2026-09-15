@@ -1,6 +1,6 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.3.5**.
+Current app version: **0.3.6**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -9,7 +9,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Imports one or more local folders of images
 - After results exist, newly added folders are analysed incrementally; existing measurements are kept and only new frames are decoded
 - Runs heavy per-frame measurements in a local Web Worker pool when the browser supports it, with a main-thread fallback
-- Uses full-resolution FITS pixels, while keeping Standard fast with sampled expensive passes and local star-window measurements
+- Uses full-resolution FITS/XISF pixels, while keeping Standard fast with sampled expensive passes and local star-window measurements
 - Adds **Stop Analysis** for very large batches; completed frames are kept and queued/active worker jobs are cancelled
 - Scores each image using:
   - sharpness
@@ -25,12 +25,12 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Lets you select analysed images and copy them to another local folder
 - Shows larger stretched previews in a result grid, with eccentricity, HFR, star count, and mean brightness under each image
 - Shows an expandable **Why this score?** breakdown under each analysed frame
-- Scores clipping from hard-clipped and near-saturated highlights, with FITS clipping checks made during the full-resolution pixel read
+- Scores clipping from hard-clipped and near-saturated highlights, with FITS/XISF clipping checks made during the full-resolution pixel read
 - Shows amber preview/zoom rings and a warning when broad halos are suspected around bright stars
 - Lets you adjust preview stretch after analysis and click any preview to inspect it in a higher-resolution zoom view
 - Adds zoom tools for guide-star overlays, repeat-drift markers, clicked-star FWHM/HFR readouts, and a 2x/4x/8x magnifier lens
-- Detects FITS filters, shows filter tabs, and keeps the All view available
-- Detects FITS light-frame RA/DEC, groups lights by object shot, and compares light scores inside the same object shot and filter
+- Detects FITS/XISF filters, shows filter tabs, and keeps the All view available
+- Detects FITS/XISF light-frame RA/DEC, groups lights by object shot, and compares light scores inside the same object shot and filter
 - Uses focal length and pixel size metadata, or WCS pixel scale when available, to derive the allowed RA/DEC deviation for object-shot grouping
 - Adds Keep/Review/Discard result-group tabs below Filters so the grid can be grouped by recommendation
 - Detects `Light`, `Flat`, `Dark`, `Bias`, and `Dark Flat` frame types and shows frame-type tabs
@@ -39,7 +39,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Shows a calibration report by set, including median consistency, flat histogram target checks, light-leak/gradient warnings, and hot-pixel or brightness outlier signals
 - Shows a compact linear histogram overlay on Flat previews, with the target band and median marker
 - Applies strong Flat artefact penalties when a flat's histogram, spread, gradient, or tile pattern diverges from the rest of its Flat/filter set
-- Detects camera/sensor model from FITS metadata or path and uses sensor-aware dark-frame outlier thresholds, including low-glow BSI profiles for IMX571/ASI2600/QHY268-style cameras
+- Detects camera/sensor model from FITS/XISF metadata or path and uses sensor-aware dark-frame outlier thresholds, including low-glow BSI profiles for IMX571/ASI2600/QHY268-style cameras
 - Checks calibration compatibility against light frames: darks need matching exposure and camera temperature; flats, bias, and dark flats check camera temperature only
 - Lets you adjust keeper score thresholds with per-filter numeric entry boxes
 - Can copy selected images into filter-named and/or frame-type output folders
@@ -79,10 +79,10 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 
 ## Notes
 
-- Supports common browser images (JPG/PNG/WebP/TIFF) plus FITS (`.fit`, `.fits`, `.fts`).
+- Supports common browser images (JPG/PNG/WebP/TIFF), FITS (`.fit`, `.fits`, `.fts`), and uncompressed monolithic XISF (`.xisf`).
 - Folders can be added one after another before or after analysis. When results already exist, clicking **Analyse** processes only newly added supported frames, then refreshes scores and reports for the combined batch. The folder list shows browser-safe relative folder paths because browsers hide full disk paths.
-- **Analysis Mode** defaults to **Standard**. FITS measurements now use the full-resolution pixel array in both modes. Standard stays faster by sampling expensive whole-frame passes; Expert uses deeper sampling budgets for star size, roundness, repeat drift, flat artefacts, clouds, halos, and histograms.
-- Analysis uses a local worker pool when available. Worker count is selected automatically from detected logical CPU cores, reported/estimated memory, and the largest files in the current batch. The app normally leaves one logical core free for the UI and reduces workers when large FITS files would create memory pressure.
+- **Analysis Mode** defaults to **Standard**. FITS/XISF measurements now use the full-resolution pixel array in both modes. Standard stays faster by sampling expensive whole-frame passes; Expert uses deeper sampling budgets for star size, roundness, repeat drift, flat artefacts, clouds, halos, and histograms.
+- Analysis uses a local worker pool when available. Worker count is selected automatically from detected logical CPU cores, reported/estimated memory, and the largest files in the current batch. The app normally leaves one logical core free for the UI and reduces workers when large FITS/XISF files would create memory pressure.
 - In the browser, memory detection is approximate because Safari/Firefox may not expose physical RAM. The app then uses a conservative fallback. In the Electron desktop wrapper, the app can read real local CPU and RAM values and use them for the same automatic worker choice.
 - If Web Workers are unavailable or blocked, analysis falls back to the original local single-thread path.
 - During analysis, the summary panel shows elapsed time and estimated remaining seconds. The estimate starts after the first frame has completed and improves as more frames finish. With workers, the remaining-time estimate accounts for parallel frames in progress.
@@ -91,29 +91,32 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - The banner logo is bundled locally at `assets/logo-moon-conjunction.png`, so the app does not need the original external drive to display it.
 - Shows the count of real astronomy frames and ignores hidden system sidecar files such as macOS `._...` entries.
 - FITS support targets image data in the primary HDU with BITPIX `8`, `16`, `32`, `64`, `-32`, or `-64`.
+- XISF support targets uncompressed monolithic `.xisf` files with attached image data. Supported sample formats are `UInt8`, `Int8`, `UInt16`, `Int16`, `UInt32`, `Int32`, `Float32`, and `Float64`. Compressed, distributed, external-block, complex, and 64-bit integer XISF data are reported as unsupported for now.
 - Preview stretch is adjustable after analysis; `0%` is neutral/linear and higher values progressively lift faint detail.
 - Preview images are rendered losslessly to avoid compression blocks in the grid and zoom viewer.
 - The zoom viewer uses a higher-resolution detail render than the grid preview, up to 6000 pixels on the longest side.
-- In the zoom star overlay, teal/green circles are normal guide-sample stars, red circles are guide-sample stars supporting a `Possible` or `Severe` tracking warning, yellow circles or links are repeat-drift candidates, and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. Tiny/faint detections are not circled because they are not reliable enough for guiding diagnosis.
+- In the zoom star overlay, teal/green circles are normal guide/reference stars; orange circles are reliable corner reference stars with poor local shape, useful for spotting coma/field curvature/tilt; red circles are central guide-sample stars supporting a `Possible` or `Severe` tracking warning; yellow circles or links are repeat-drift candidates; and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. Tiny/faint detections are not circled because they are not reliable enough for guiding diagnosis.
 - Star overlays and star/tracking/halo calculations are only used for light frames; Flats, Biases, Darks, and Dark Flats are judged with calibration-specific measures instead.
-- FITS sharpness, roundness, HFR, and clipping are scored from linear FITS data, not from the stretched preview image.
-- FITS clipping and near-saturation are measured on the full-resolution FITS data while the frame is decoded, so small saturated star cores are not averaged away.
+- FITS/XISF sharpness, roundness, HFR, and clipping are scored from linear image data, not from the stretched preview image.
+- FITS/XISF clipping and near-saturation are measured on the full-resolution data while the frame is decoded, so small saturated star cores are not averaged away.
 - In v0.3.0, FITS sharpness, roundness, HFR/FWHM, clipping, clouds, flats, halos, and repeat-drift work from the original FITS pixel grid. Standard and Expert differ by sampling depth and budgets, not by a smaller FITS analysis image.
 - In v0.3.1, tracking detection also measures wider profiles around the brightest stars. This catches coherent guiding/mount/wind trails when the tight star core still looks deceptively round.
 - In v0.3.2, tracking detection moved to central-field big and medium stars rather than the full field, so telescope-dependent edge/corner aberrations are less likely to be mistaken for guiding drift.
 - In v0.3.3, red star overlay circles were made stricter: red means a guide-sample star supporting a `Possible` or `Severe` tracking warning, not every mildly elongated detected star.
 - In v0.3.4, the overlay was changed to show only the guide-star sample used for tracking analysis. Tiny/faint detections are excluded from the overlay and from guiding/tracking decisions.
+- After v0.3.6, the visual overlay includes reliable full-field guide/reference stars again so corners can be inspected manually, while tracking severity remains based on the central guide-star sample. Poorly shaped corner reference stars are orange, not red, because they can be optical/corner behaviour rather than guiding drift.
 - In v0.3.5, cloud detection was retrained from labelled cloudy and clear batches. Background range plus structure is now the warning gate; star-loss and mean-lift are supporting evidence.
+- In v0.3.6, uncompressed monolithic XISF support was added. XISF files use the same scoring pipeline as FITS after their XML header and attached linear pixels are decoded.
 - Sharpness scoring blends FWHM and HFR so tight-star measurements are less fragile.
 - Star metrics use all detected stars in each image; very dense fields can take longer to analyse.
 - Star count is scored relative to the current object-shot/filter group to help catch clouds, haze, fog, or dawn reducing visible stars without comparing different targets.
-- FITS filter names are detected from header keywords such as `FILTER`; file and folder names are used as a fallback.
-- FITS light-frame object shots are detected from RA/DEC header keywords such as `OBJCTRA`/`OBJCTDEC`, `RA`/`DEC`, or WCS `CRVAL1`/`CRVAL2`.
-- FITS focal length, pixel size, binning, and WCS pixel scale are detected when present and used to calculate the object-shot grouping tolerance.
+- FITS/XISF filter names are detected from metadata such as `FILTER`; file and folder names are used as a fallback.
+- FITS/XISF light-frame object shots are detected from RA/DEC metadata such as `OBJCTRA`/`OBJCTDEC`, `RA`/`DEC`, or WCS `CRVAL1`/`CRVAL2`.
+- FITS/XISF focal length, pixel size, binning, and WCS pixel scale are detected when present and used to calculate the object-shot grouping tolerance.
 - Coordinates are shown in astronomy format: RA as `HHh MMm SS.Ss` and DEC as signed `DDdeg MM' SS.S"`.
-- FITS frame types are detected from header keywords such as `IMAGETYP`; file and folder names are used as a fallback.
-- FITS exposure and camera temperature are detected from common header keywords such as `EXPTIME` and `CCD-TEMP`; filenames like `-10.00_300.00s` are used as a fallback.
-- FITS camera/sensor model is detected from headers such as `INSTRUME`, `CAMERA`, `CCDNAME`, `DETECTOR`, and `SENSOR`; the file path is used as fallback for names like `IMX571`, `ASI2600`, or `QHY268`.
+- FITS/XISF frame types are detected from metadata such as `IMAGETYP`; file and folder names are used as a fallback.
+- FITS/XISF exposure and camera temperature are detected from common metadata such as `EXPTIME` and `CCD-TEMP`; filenames like `-10.00_300.00s` are used as a fallback.
+- FITS/XISF camera/sensor model is detected from metadata such as `INSTRUME`, `CAMERA`, `CCDNAME`, `DETECTOR`, and `SENSOR`; the file path is used as fallback for names like `IMX571`, `ASI2600`, or `QHY268`.
 - Mixed-filter sessions are grouped by filter for scoring, so `Ha`, `OIII`, `L`, `R`, `G`, and `B` frames are compared fairly.
 - Mixed-target light sessions are grouped by object shot for scoring, so frames from a different RA/DEC are not compared as if they were the same deep-sky object.
 - Mixed frame-type folders are grouped by type, so `Flat`, `Dark`, `Bias`, and `Dark Flat` frames are not scored as weak light frames.
@@ -134,7 +137,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 
 ## Filter Detection
 
-For FITS files, the app reads the FITS header first. It checks these keywords:
+For FITS files, the app reads the FITS header first. For XISF files, it reads the XML header first, including embedded `FITSKeyword` entries and common native `Property` aliases. It checks these metadata keys:
 
 `FILTER`, `FILTER1`, `FILTER2`, `FILTER3`, `FILTNAME`, `FILTNUM`, `FILTERID`, `INSFLNAM`, `OPTIC`, and `FILT`.
 
@@ -149,13 +152,13 @@ Detected values are normalised into common filter names:
 - `SII`, `S2`, `SulfurII`, `SulphurII` -> `SII`
 - `Clear`, `Open` -> `Clear`
 
-If the FITS header has no usable filter, or if the file is not FITS, the app falls back to the file and folder path. For example, folders or filenames containing `Ha`, `OIII`, `SII`, `L`, `R`, `G`, `B`, `Clear`, or custom names such as `L-eXtreme` can be used for grouping.
+If the header has no usable filter, the app falls back to the file and folder path. For example, folders or filenames containing `Ha`, `OIII`, `SII`, `L`, `R`, `G`, `B`, `Clear`, or custom names such as `L-eXtreme` can be used for grouping.
 
 If neither the header nor the path gives a usable filter, the image is grouped as `Unknown`.
 
 ## Object Shot Detection
 
-For FITS light frames, the app checks whether frames are aimed at the same deep-sky object before doing relative scoring. It reads RA/DEC from paired FITS keywords such as:
+For FITS/XISF light frames, the app checks whether frames are aimed at the same deep-sky object before doing relative scoring. It reads RA/DEC from paired metadata keys such as:
 
 `OBJCTRA`/`OBJCTDEC`, `OBJRA`/`OBJDEC`, `RA_OBJ`/`DEC_OBJ`, `TELRA`/`TELDEC`, `RA`/`DEC`, and WCS `CRVAL1`/`CRVAL2`.
 
@@ -176,7 +179,7 @@ Light-frame relative scores are then calculated inside each `object shot + filte
 
 ## Frame Type And Calibration Detection
 
-For FITS files, the app reads the FITS header first. It checks these frame-type keywords:
+For FITS files, the app reads the FITS header first. For XISF files, it reads embedded `FITSKeyword` entries and common native `Property` aliases first. It checks these frame-type metadata keys:
 
 `IMAGETYP`, `IMAGETYPE`, `FRAME`, `FRAMETYP`, `FRAMETYPE`, `OBSTYPE`, `EXPTYPE`, and `PICTYPE`.
 
@@ -188,7 +191,7 @@ Detected values are normalised into:
 - `Bias`, `Biases`, `Offset`, `Zero`, `MasterBias` -> `Bias`
 - `DarkFlat`, `FlatDark`, `Dark Flat`, `Flat Dark` -> `Dark Flat`
 
-If the FITS header has no usable frame type, the app falls back to the file and folder path. For example, folders named `LIGHT`, `FLAT`, `DARK`, `BIAS`, or `DARKFLAT` are used for grouping.
+If the header has no usable frame type, the app falls back to the file and folder path. For example, folders named `LIGHT`, `FLAT`, `DARK`, `BIAS`, or `DARKFLAT` are used for grouping.
 
 `Light` and `Unknown` frames use the normal star-quality analysis. Calibration frames bypass star, tracking, repeat-drift, halo, and light-frame elongation analysis, then use purpose-specific checks:
 
@@ -199,4 +202,4 @@ If the FITS header has no usable frame type, the app falls back to the file and 
 
 Calibration frames are marked `Keep`, `Review`, or `Discard` from their calibration score and warnings. When several calibration frames of the same type are present, the app also flags frames whose level differs noticeably from the rest of that set.
 
-The app also detects exposure and camera temperature for compatibility checks. FITS headers are used first; file names like `-10.00_300.00s` are used as a fallback. Darks are checked against lights for both exposure and temperature. Flats, Biases, and Dark Flats are checked against lights for camera temperature only.
+The app also detects exposure and camera temperature for compatibility checks. FITS/XISF metadata is used first; file names like `-10.00_300.00s` are used as a fallback. Darks are checked against lights for both exposure and temperature. Flats, Biases, and Dark Flats are checked against lights for camera temperature only.
