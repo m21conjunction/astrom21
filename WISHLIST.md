@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-09-15
-Current app version: 0.3.7
+Updated: 2026-09-16
+Current app version: 0.3.10
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -50,6 +50,9 @@ Best options:
 
 9. **Higher-Quality Zoom And Magnifier**
    Implemented with higher-resolution zoom detail rendering and selectable 2x, 4x, and 8x magnifier lens levels.
+   Refined in v0.3.8 with larger native detail renders, native-capped normal zoom, and additional 12x and 16x magnifier levels.
+   Refined in v0.3.9 with gentler inspection stretch for the zoom/magnifier render so high magnification does not over-stretch the background.
+   Refined in v0.3.10 so the full zoom preview keeps the normal grid stretch, while only the magnifier lens uses the gentler high-resolution source.
 
 11. **Web Workers / Worker Pool With Stop Control**
    Implemented as a local browser worker pool for heavy per-frame analysis. Auto worker selection scales with detected cores and memory pressure, and the UI has a **Stop Analysis** button that terminates active worker jobs, skips queued frames, and keeps completed results.
@@ -71,6 +74,9 @@ Best options:
 
 21. **Cloud False-Positive Guard**
    Implemented in v0.3.7 after a labelled clear batch was incorrectly tagged as cloud because it had strong smooth background/target structure. Cloud warnings now require same-object/filter star-loss support, star loss plus mean lift, or an extreme structure case. Smooth gradients and real nebulosity can still appear in the exported cloud structure metrics, but they no longer apply a cloud warning or score penalty by themselves.
+
+22. **Higher-Resolution Frame Preview And Stronger Magnifier**
+   Implemented in v0.3.8 and refined through v0.3.10. The detail view can render selected frames up to a larger safe inspection size, normal zoom is capped so it does not upscale beyond native detail pixels, the magnifier now offers 12x and 16x levels in addition to 2x, 4x, and 8x, the full zoom preview keeps the normal grid stretch, and the magnifier lens uses a separate gentler-stretch source.
 
 ## Open Ideas
 
@@ -102,4 +108,4 @@ Best options:
 
 17. **App Versioning And Release Notes**
    Define a versioning approach before packaging: visible app version in the UI, changelog/release notes, calculation-version tracking for CSV exports, and local-settings migration when defaults or score formulas change.
-   Status: started. The visible app/package version is now `0.3.7`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.
+   Status: started. The visible app/package version is now `0.3.10`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.

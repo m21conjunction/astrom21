@@ -2,7 +2,7 @@
 
 Updated: 2026-09-16
 
-Current app version: **0.3.7**.
+Current app version: **0.3.10**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -104,7 +104,9 @@ FITS and XISF frames can be large, so the app keeps separate visual and measurem
 
 - Full-resolution analysis pixels: the original FITS/XISF width and height.
 - Preview image: longest side up to `1400` pixels.
-- Zoom detail image: longest side up to `6000` pixels.
+- Zoom detail image: longest side up to `9000` pixels, with a `48 MP` pixel-budget cap.
+- Normal zoom view: capped at `300%` and further limited to avoid enlarging beyond the native detail render.
+- Magnifier lens: selectable `2x`, `4x`, `8x`, `12x`, and `16x`.
 
 Preview and zoom images are downsampled only for display. FITS measurements in v0.3.0 and XISF measurements in v0.3.6 use the full-resolution pixel grid in both Standard and Expert modes.
 
@@ -224,14 +226,23 @@ For bitmap images, star-size measurements are in the analysis canvas pixel scale
 
 ## Display Stretch
 
-Preview stretch does not affect scoring. It only affects thumbnails and the zoom display.
+Preview stretch does not affect scoring. It only affects thumbnails and inspection display.
 
 At `0%` preview stretch, the preview is neutral/linear.
+
+Grid thumbnails and the full zoom preview use the selected stretch value directly. The magnifier lens uses a separate high-resolution source with a gentler stretch:
+
+```text
+magnifier_strength = (preview_stretch / 100) * 0.45
+```
+
+That keeps the magnifier from over-amplifying the background while the full preview stays visually consistent with the grid card. At `0%`, the grid, full zoom preview, and magnifier all remain neutral/linear.
 
 For stretch values above `0%`:
 
 ```text
-strength = preview_stretch / 100
+strength = preview_stretch / 100               for grid thumbnails and full zoom preview
+strength = magnifier_strength                  for the magnifier lens source
 low_percentile = strength * 0.01
 high_percentile = 1 - strength * 0.015
 asinh_strength = strength * 14
@@ -718,6 +729,12 @@ In v0.3.5, cloud warnings were trained from labelled cloudy and clear batches. B
 In v0.3.6, XISF files use the same cloud calculation after their linear pixels are decoded.
 
 In v0.3.7, the cloud gate was tightened after a labelled clear batch showed strong background/target structure but no actual cloud. Background range and structure are still measured, but they no longer create a normal cloud warning by themselves. A warning now needs same-object/filter star loss, star loss plus mean lift, or an extreme structure case. This reduces false positives on real nebulosity, smooth sky gradients, and optical background structure.
+
+In v0.3.8, the preview inspection workflow was adjusted for better visual detail. The opened detail render can use a larger safe preview, regular zoom is capped at the native detail image scale so it does not create blurry fake enlargement, and the magnifier lens includes stronger `12x` and `16x` levels for manual artifact inspection.
+
+In v0.3.9, the inspection detail render uses a gentler stretch than the grid thumbnail. This avoids over-stretching faint background structure when the magnifier is active, especially at `12x` or `16x`.
+
+In v0.3.10, the full zoom preview was restored to the normal grid stretch, and the gentler stretch was moved to a separate magnifier-only high-resolution source. The lens stays hidden while that source is being prepared, instead of magnifying the temporary low-resolution thumbnail.
 
 ### Large-Scale Background Structure
 
@@ -2447,7 +2464,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.3.7`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.3.10`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.

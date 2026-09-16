@@ -93,7 +93,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.3.7";
+const appVersion = "0.3.10";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -343,9 +343,13 @@ const workerMemoryProfiles = {
     reserveGb: 4
   }
 };
-const zoomDetailMaxDimension = 6000;
+const zoomDetailMaxDimension = 9000;
+const zoomDetailMaxPixels = 48_000_000;
+const zoomSliderMaxPercent = 300;
+const zoomInspectionStretchScale = 0.45;
 const zoomLensSize = 220;
 const defaultZoomLensMagnification = 4;
+const zoomLensMagnificationLevels = [2, 4, 8, 12, 16];
 const bitmapClippingThreshold = 250;
 const bitmapNearSaturationThreshold = 245;
 const hardClippingFullPenaltyPercent = 0.01;
@@ -2001,7 +2005,7 @@ function applyStoredSettings() {
   ) {
     csvSeparatorSelect.value = settings.csvSeparator;
   }
-  if (zoomMagnifierPower && [2, 4, 8].includes(Number(settings.zoomMagnifierPower))) {
+  if (zoomMagnifierPower && zoomLensMagnificationLevels.includes(Number(settings.zoomMagnifierPower))) {
     zoomMagnifierPower.value = String(Number(settings.zoomMagnifierPower));
   }
   if (haloPenaltyCheckbox) {
@@ -2101,8 +2105,8 @@ function updatePreviewStretchLabel() {
   previewStretchValue.textContent = `${getPreviewStretchValue()}%`;
 }
 
-function getPreviewStretchSettings() {
-  const strength = getPreviewStretchValue() / 100;
+function stretchSettingsFromStrength(strengthValue) {
+  const strength = clamp(Number(strengthValue) || 0, 0, 1);
   if (strength <= 0) {
     return {
       neutral: true,
@@ -2120,6 +2124,14 @@ function getPreviewStretchSettings() {
     asinhStrength: strength * 14,
     gamma: 1 - strength * 0.28
   };
+}
+
+function getPreviewStretchSettings() {
+  return stretchSettingsFromStrength(getPreviewStretchValue() / 100);
+}
+
+function getInspectionStretchSettings() {
+  return stretchSettingsFromStrength((getPreviewStretchValue() / 100) * zoomInspectionStretchScale);
 }
 
 function getWeights() {
@@ -6128,6 +6140,47 @@ function findResultByKey(key) {
   return state.results.find((result) => getResultKey(result) === key) || null;
 }
 
+function revokeZoomFullDetail(result) {
+  if (!result) {
+    return;
+  }
+  if (result.zoomDetailObjectUrl && result.zoomDetail && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(result.zoomDetail);
+  }
+  result.zoomDetail = "";
+  result.zoomDetailObjectUrl = false;
+  result.zoomDetailWidth = 0;
+  result.zoomDetailHeight = 0;
+}
+
+function revokeZoomDetail(result) {
+  if (!result) {
+    return;
+  }
+  revokeZoomFullDetail(result);
+  revokeZoomLensDetail(result);
+}
+
+function revokeZoomLensDetail(result) {
+  if (!result) {
+    return;
+  }
+  if (result.zoomLensDetailObjectUrl && result.zoomLensDetail && typeof URL.revokeObjectURL === "function") {
+    URL.revokeObjectURL(result.zoomLensDetail);
+  }
+  result.zoomLensDetail = "";
+  result.zoomLensDetailObjectUrl = false;
+  result.zoomLensDetailWidth = 0;
+  result.zoomLensDetailHeight = 0;
+  result.zoomLensDetailPending = false;
+}
+
+function revokeZoomDetailsForResults(results) {
+  for (const result of results || []) {
+    revokeZoomFullDetail(result);
+  }
+}
+
 function fittedZoomWidth() {
   const naturalWidth = zoomImage.naturalWidth || 1;
   const naturalHeight = zoomImage.naturalHeight || 1;
@@ -6142,13 +6195,33 @@ function fittedZoomWidth() {
   return Math.max(1, naturalWidth * fitScale);
 }
 
+function maxNativeZoomPercent() {
+  const fitWidth = fittedZoomWidth();
+  const naturalWidth = zoomImage.naturalWidth || 1;
+  if (fitWidth <= 0 || naturalWidth <= 1) {
+    return zoomSliderMaxPercent;
+  }
+  const nativeLimit = Math.floor((naturalWidth / fitWidth) * 100);
+  const steppedLimit = Math.floor(nativeLimit / 25) * 25;
+  return clamp(steppedLimit || 100, 100, zoomSliderMaxPercent);
+}
+
+function syncZoomRangeLimit() {
+  if (!zoomRange) {
+    return zoomSliderMaxPercent;
+  }
+  const maxZoom = maxNativeZoomPercent();
+  zoomRange.max = String(maxZoom);
+  return maxZoom;
+}
+
 function activeZoomResult() {
   return state.zoomedKey ? findResultByKey(state.zoomedKey) : null;
 }
 
 function getZoomLensMagnification() {
   const value = Number(zoomMagnifierPower ? zoomMagnifierPower.value : defaultZoomLensMagnification);
-  return [2, 4, 8].includes(value) ? value : defaultZoomLensMagnification;
+  return zoomLensMagnificationLevels.includes(value) ? value : defaultZoomLensMagnification;
 }
 
 function selectedOverlayStar(result = activeZoomResult()) {
@@ -6178,6 +6251,12 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
   }
   if (!result) {
     zoomStatus.textContent = "";
+    return;
+  }
+  if (result && result.zoomDetail && Number.isFinite(result.zoomDetailWidth) && Number.isFinite(result.zoomDetailHeight)) {
+    zoomStatus.textContent = `Inspection detail ${Math.round(result.zoomDetailWidth)} x ${Math.round(
+      result.zoomDetailHeight
+    )} px; zoom capped at native detail scale`;
     return;
   }
   zoomStatus.textContent = result && result.zoomDetail ? "High-resolution detail view" : "Preparing high-resolution detail view...";
@@ -6354,7 +6433,8 @@ function nearestOverlayStar(event) {
 }
 
 function setZoomLevel(value) {
-  const zoom = clamp(Number(value) || 100, 100, 800);
+  const maxZoom = syncZoomRangeLimit();
+  const zoom = clamp(Number(value) || 100, 100, maxZoom);
   zoomRange.value = String(zoom);
   zoomValue.textContent = `${zoom}%`;
 
@@ -6392,17 +6472,62 @@ async function prepareZoomDetail(result, requestId) {
   }
 
   try {
-    const dataUrl = await buildZoomDetailDataUrl(result);
-    result.zoomDetail = dataUrl;
+    const detail = await buildZoomDetail(result);
     if (state.zoomRequestId !== requestId || state.zoomedKey !== getResultKey(result)) {
+      if (detail.objectUrl && typeof URL.revokeObjectURL === "function") {
+        URL.revokeObjectURL(detail.url);
+      }
       return;
     }
-    zoomImage.src = dataUrl;
-    updateZoomStatus(result, "High-resolution detail view");
+    revokeZoomDetail(result);
+    result.zoomDetail = detail.url;
+    result.zoomDetailObjectUrl = detail.objectUrl;
+    result.zoomDetailWidth = detail.width;
+    result.zoomDetailHeight = detail.height;
+    zoomImage.src = detail.url;
+    updateZoomStatus(result);
     setZoomLevel(zoomRange.value);
+    if (state.magnifierActive) {
+      prepareZoomLensDetail(result, requestId);
+    }
   } catch (error) {
     if (state.zoomRequestId === requestId) {
       updateZoomStatus(result, "Using grid preview");
+    }
+  }
+}
+
+async function prepareZoomLensDetail(result, requestId) {
+  if (!result || result.zoomLensDetail || result.zoomLensDetailPending) {
+    return;
+  }
+
+  result.zoomLensDetailPending = true;
+  if (state.zoomRequestId === requestId && state.zoomedKey === getResultKey(result) && state.magnifierActive) {
+    updateZoomStatus(result, "Preparing magnifier detail...");
+  }
+
+  try {
+    const detail = await buildZoomLensDetail(result);
+    if (state.zoomRequestId !== requestId || state.zoomedKey !== getResultKey(result)) {
+      if (detail.objectUrl && typeof URL.revokeObjectURL === "function") {
+        URL.revokeObjectURL(detail.url);
+      }
+      result.zoomLensDetailPending = false;
+      return;
+    }
+    revokeZoomLensDetail(result);
+    result.zoomLensDetail = detail.url;
+    result.zoomLensDetailObjectUrl = detail.objectUrl;
+    result.zoomLensDetailWidth = detail.width;
+    result.zoomLensDetailHeight = detail.height;
+    result.zoomLensDetailPending = false;
+    updateZoomLensBackground();
+    updateZoomStatus(result);
+  } catch (error) {
+    result.zoomLensDetailPending = false;
+    if (state.zoomRequestId === requestId && state.zoomedKey === getResultKey(result) && state.magnifierActive) {
+      updateZoomStatus(result, "Magnifier detail unavailable");
     }
   }
 }
@@ -6416,6 +6541,9 @@ function openZoom(result) {
   document.body.classList.add("modal-open");
   setZoomLevel(100);
   prepareZoomDetail(result, state.zoomRequestId);
+  if (state.magnifierActive) {
+    prepareZoomLensDetail(result, state.zoomRequestId);
+  }
   zoomCloseBtn.focus();
 }
 
@@ -6441,10 +6569,15 @@ function hideZoomLens() {
 }
 
 function updateZoomLensBackground() {
-  if (!zoomLens || !zoomImage.src) {
+  const result = activeZoomResult();
+  if (!zoomLens || !result || !result.zoomLensDetail) {
+    if (zoomLens) {
+      zoomLens.style.backgroundImage = "";
+      zoomLens.style.backgroundSize = "";
+    }
     return;
   }
-  zoomLens.style.backgroundImage = `url("${zoomImage.currentSrc || zoomImage.src}")`;
+  zoomLens.style.backgroundImage = `url("${result.zoomLensDetail}")`;
   zoomLens.style.backgroundSize = "";
 }
 
@@ -6458,11 +6591,24 @@ function setMagnifierActive(active) {
     hideZoomLens();
     return;
   }
+  const result = activeZoomResult();
+  if (result) {
+    prepareZoomLensDetail(result, state.zoomRequestId);
+  }
   updateZoomLensBackground();
 }
 
 function updateZoomLens(event) {
   if (!state.magnifierActive || !zoomLens || zoomOverlay.hidden || !zoomImage.src) {
+    hideZoomLens();
+    return;
+  }
+  const result = activeZoomResult();
+  if (!result || !result.zoomLensDetail) {
+    if (result && !result.zoomLensDetailPending) {
+      prepareZoomLensDetail(result, state.zoomRequestId);
+    }
+    updateZoomStatus(result, "Preparing magnifier detail...");
     hideZoomLens();
     return;
   }
@@ -6563,7 +6709,7 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
     const chunk = results.slice(index, index + chunkSize);
     for (const result of chunk) {
       refreshResultThumbnail(result);
-      result.zoomDetail = "";
+      revokeZoomDetail(result);
     }
     updatePreviewImagesForResults(chunk);
     processed += chunk.length;
@@ -7241,6 +7387,15 @@ function parseXisfHeader(bytes, buffer) {
   };
 }
 
+function constrainedMaxDimensionForPixels(width, height, maxDimension, maxPixels) {
+  const longest = Math.max(width, height, 1);
+  const pixelCount = Math.max(width * height, 1);
+  const dimensionScale = maxDimension / longest;
+  const pixelScale = Math.sqrt(maxPixels / pixelCount);
+  const scale = Math.min(1, dimensionScale, pixelScale);
+  return Math.max(16, Math.floor(longest * scale));
+}
+
 function downsampleFloatImage(source, sourceWidth, sourceHeight, maxDimension = 1400) {
   const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight));
   const width = Math.max(16, Math.round(sourceWidth * scale));
@@ -7630,6 +7785,14 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
       : computeElongation(gray, width, height, mean, std, { sampleTarget: analysisConfig.elongationSampleTarget }),
     previewSource,
     zoomDetail: "",
+    zoomDetailObjectUrl: false,
+    zoomDetailWidth: 0,
+    zoomDetailHeight: 0,
+    zoomLensDetail: "",
+    zoomLensDetailObjectUrl: false,
+    zoomLensDetailWidth: 0,
+    zoomLensDetailHeight: 0,
+    zoomLensDetailPending: false,
     thumbnail: ""
   };
   refreshResultThumbnail(result);
@@ -8587,39 +8750,75 @@ async function analyzePendingFiles(files, analysisMode, analysisConfig, progress
   return analyzeFilesSequentially(files, analysisMode, analysisConfig, progress, run);
 }
 
-async function zoomCanvasForFitsFile(file) {
+async function zoomCanvasForFitsFile(file, stretchSettings = getPreviewStretchSettings()) {
   const { rawGray, width, height } = await readFitsFrame(file);
-  const zoomImage = downsampleFloatImage(rawGray, width, height, zoomDetailMaxDimension);
-  return stretchedGrayscaleCanvasFromData(zoomImage.gray, zoomImage.width, zoomImage.height);
+  const maxDimension = constrainedMaxDimensionForPixels(width, height, zoomDetailMaxDimension, zoomDetailMaxPixels);
+  const zoomImage = downsampleFloatImage(rawGray, width, height, maxDimension);
+  return stretchedGrayscaleCanvasFromData(zoomImage.gray, zoomImage.width, zoomImage.height, stretchSettings);
 }
 
-async function zoomCanvasForXisfFile(file) {
+async function zoomCanvasForXisfFile(file, stretchSettings = getPreviewStretchSettings()) {
   const { rawGray, width, height } = await readXisfFrame(file);
-  const zoomImage = downsampleFloatImage(rawGray, width, height, zoomDetailMaxDimension);
-  return stretchedGrayscaleCanvasFromData(zoomImage.gray, zoomImage.width, zoomImage.height);
+  const maxDimension = constrainedMaxDimensionForPixels(width, height, zoomDetailMaxDimension, zoomDetailMaxPixels);
+  const zoomImage = downsampleFloatImage(rawGray, width, height, maxDimension);
+  return stretchedGrayscaleCanvasFromData(zoomImage.gray, zoomImage.width, zoomImage.height, stretchSettings);
 }
 
-async function zoomCanvasForBitmapFile(file) {
+async function zoomCanvasForBitmapFile(file, stretchSettings = getPreviewStretchSettings()) {
   const bitmap = await createImageBitmap(file);
-  const { canvas, ctx, width, height } = prepareCanvas(bitmap, zoomDetailMaxDimension);
+  const maxDimension = constrainedMaxDimensionForPixels(bitmap.width, bitmap.height, zoomDetailMaxDimension, zoomDetailMaxPixels);
+  const { canvas, ctx, width, height } = prepareCanvas(bitmap, maxDimension);
   ctx.drawImage(bitmap, 0, 0, width, height);
   if (typeof bitmap.close === "function") {
     bitmap.close();
   }
   const imageData = ctx.getImageData(0, 0, width, height);
-  return stretchedColorCanvasFromImageData(imageData, width, height);
+  return stretchedColorCanvasFromImageData(imageData, width, height, stretchSettings);
 }
 
-async function buildZoomDetailDataUrl(result) {
+function canvasToPngObjectUrl(canvas) {
+  if (typeof canvas.toBlob !== "function" || typeof URL.createObjectURL !== "function") {
+    return Promise.resolve({
+      url: canvas.toDataURL("image/png"),
+      objectUrl: false
+    });
+  }
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        resolve({
+          url: canvas.toDataURL("image/png"),
+          objectUrl: false
+        });
+        return;
+      }
+      resolve({
+        url: URL.createObjectURL(blob),
+        objectUrl: true
+      });
+    }, "image/png");
+  });
+}
+
+async function buildZoomDetail(result, stretchSettings = getPreviewStretchSettings()) {
   let canvas = null;
   if (isFitsFile(result.sourceFile)) {
-    canvas = await zoomCanvasForFitsFile(result.sourceFile);
+    canvas = await zoomCanvasForFitsFile(result.sourceFile, stretchSettings);
   } else if (isXisfFile(result.sourceFile)) {
-    canvas = await zoomCanvasForXisfFile(result.sourceFile);
+    canvas = await zoomCanvasForXisfFile(result.sourceFile, stretchSettings);
   } else {
-    canvas = await zoomCanvasForBitmapFile(result.sourceFile);
+    canvas = await zoomCanvasForBitmapFile(result.sourceFile, stretchSettings);
   }
-  return canvas.toDataURL("image/png");
+  const detail = await canvasToPngObjectUrl(canvas);
+  return {
+    ...detail,
+    width: canvas.width,
+    height: canvas.height
+  };
+}
+
+async function buildZoomLensDetail(result) {
+  return buildZoomDetail(result, getInspectionStretchSettings());
 }
 
 async function getOrCreateDirectory(rootHandle, directoryParts) {
@@ -9030,6 +9229,7 @@ async function analyzeSelectedFiles() {
 
   if (supported.length === 0) {
     resultsBody.innerHTML = "";
+    revokeZoomDetailsForResults(state.results);
     state.results = [];
     state.selectedKeys.clear();
     state.activeFrameType = allFrameTypesKey;
@@ -9084,6 +9284,7 @@ async function analyzeSelectedFiles() {
     );
 
     const completedKeys = new Set(newResults.map((result) => getResultKey(result)));
+    revokeZoomDetailsForResults(state.results.filter((result) => completedKeys.has(getResultKey(result))));
     const retainedResults = state.results.filter((result) => !completedKeys.has(getResultKey(result)));
     const results = retainedResults.concat(newResults);
     computeFinalScores(results);
@@ -9191,6 +9392,7 @@ if (clearFoldersBtn) {
       folderInput.value = "";
     }
     updateFolderFileCount();
+    revokeZoomDetailsForResults(state.results);
     state.results = [];
     state.selectedKeys.clear();
     state.activeFrameType = allFrameTypesKey;
@@ -9439,6 +9641,7 @@ if (zoomMagnifierPower) {
   zoomMagnifierPower.addEventListener("change", () => {
     saveSettings();
     updateZoomLensBackground();
+    hideZoomLens();
   });
 }
 
