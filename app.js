@@ -93,7 +93,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.3.6";
+const appVersion = "0.3.7";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -356,10 +356,16 @@ const cloudPossibleBackgroundRangePercent = 4.3;
 const cloudPossibleStructureScore = 0.03;
 const cloudLikelyBackgroundRangePercent = 6.5;
 const cloudLikelyStructureScore = 0.16;
-const cloudSupportStarLossScore = 0.15;
-const cloudStrongStarLossScore = 0.3;
-const cloudSupportMeanLiftScore = 0.35;
+const cloudSupportStarLossScore = 0.24;
+const cloudStrongStarLossScore = 0.36;
+const cloudMeanLiftMinimumStarLossScore = 0.18;
+const cloudSupportMeanLiftScore = 0.55;
 const cloudStrongMeanLiftScore = 0.55;
+const cloudExtremeBackgroundRangePercent = 10.5;
+const cloudExtremeStructureScore = 0.43;
+const cloudExtremeSingleFrameBackgroundRangePercent = 14.5;
+const cloudExtremeSingleFrameStructureScore = 0.55;
+const cloudUnconfirmedStructureScoreCap = 0.34;
 const flatArtifactGroupMinimum = 3;
 const selectedFileMetadata = new WeakMap();
 let analysisWorkerObjectUrl = "";
@@ -5046,22 +5052,30 @@ function updateCloudAssessmentForGroup(results) {
       rangePercent >= cloudPossibleBackgroundRangePercent && structureScore >= cloudPossibleStructureScore;
     const rangeStructureLikely =
       rangePercent >= cloudLikelyBackgroundRangePercent && structureScore >= cloudLikelyStructureScore;
-    const supportEvidence =
-      starLossScore >= cloudSupportStarLossScore || meanLiftScore >= cloudSupportMeanLiftScore;
+    const meanLiftWithStarLossEvidence =
+      starLossScore >= cloudMeanLiftMinimumStarLossScore && meanLiftScore >= cloudSupportMeanLiftScore;
+    const supportEvidence = starLossScore >= cloudSupportStarLossScore || meanLiftWithStarLossEvidence;
     const strongSupportEvidence =
-      starLossScore >= cloudStrongStarLossScore || meanLiftScore >= cloudStrongMeanLiftScore;
+      starLossScore >= cloudStrongStarLossScore ||
+      (starLossScore >= cloudSupportStarLossScore && meanLiftScore >= cloudStrongMeanLiftScore);
+    const extremeStructureEvidence =
+      (rangePercent >= cloudExtremeBackgroundRangePercent &&
+        structureScore >= cloudExtremeStructureScore &&
+        meanLiftScore >= cloudStrongMeanLiftScore) ||
+      (rangePercent >= cloudExtremeSingleFrameBackgroundRangePercent &&
+        structureScore >= cloudExtremeSingleFrameStructureScore);
     let cloudScore = clamp(
       structureScore * 0.54 + starLossScore * 0.18 + meanLiftScore * 0.14 + pairedEvidence * 0.24,
       0,
       1
     );
 
-    if (rangeStructureLikely) {
+    if (extremeStructureEvidence || (rangeStructureLikely && supportEvidence)) {
       cloudScore = Math.max(cloudScore, 0.72);
       if (supportEvidence) {
         cloudScore = Math.max(cloudScore, 0.78);
       }
-    } else if (rangeStructurePossible) {
+    } else if (rangeStructurePossible && supportEvidence) {
       cloudScore = Math.max(cloudScore, 0.44);
       if (supportEvidence) {
         cloudScore = Math.max(cloudScore, 0.52);
@@ -5069,15 +5083,18 @@ function updateCloudAssessmentForGroup(results) {
       if (strongSupportEvidence) {
         cloudScore = Math.max(cloudScore, 0.62);
       }
+    } else if (rangeStructurePossible) {
+      cloudScore = Math.min(cloudScore, cloudUnconfirmedStructureScoreCap);
     }
 
     let cloudSeverity = "None";
     if (
-      rangeStructureLikely ||
+      extremeStructureEvidence ||
+      (rangeStructureLikely && supportEvidence && strongSupportEvidence) ||
       (rangeStructurePossible && strongSupportEvidence && (rangePercent >= 4.8 || structureScore >= 0.06))
     ) {
       cloudSeverity = "Likely";
-    } else if (rangeStructurePossible) {
+    } else if (rangeStructurePossible && supportEvidence) {
       cloudSeverity = "Possible";
     }
 
@@ -5089,9 +5106,13 @@ function updateCloudAssessmentForGroup(results) {
       hasRelativeStarReference && hasRelativeMeanReference
         ? `${formatMetric(starLossScore * 100, 0)}% star loss, ${formatMetric(meanLiftScore * 100, 0)}% mean-lift signal`
         : `single-frame structure check (${starCounts.length}/${cloudRelativePeerMinimum} same-shot/filter frames)`;
+    const unconfirmedStructureSummary =
+      rangeStructurePossible && !supportEvidence
+        ? "No cloud warning; background structure lacks enough same-shot star-loss confirmation"
+        : "No cloud warning";
     result.cloudSummary =
       cloudSeverity === "None"
-        ? "No cloud warning"
+        ? unconfirmedStructureSummary
         : `${cloudSeverity} cloud: ${formatMetric(rangePercent, 1)}% background range, structure ${formatMetric(
             structureScore,
             2
@@ -8133,8 +8154,14 @@ const cloudLikelyBackgroundRangePercent = ${cloudLikelyBackgroundRangePercent};
 const cloudLikelyStructureScore = ${cloudLikelyStructureScore};
 const cloudSupportStarLossScore = ${cloudSupportStarLossScore};
 const cloudStrongStarLossScore = ${cloudStrongStarLossScore};
+const cloudMeanLiftMinimumStarLossScore = ${cloudMeanLiftMinimumStarLossScore};
 const cloudSupportMeanLiftScore = ${cloudSupportMeanLiftScore};
 const cloudStrongMeanLiftScore = ${cloudStrongMeanLiftScore};
+const cloudExtremeBackgroundRangePercent = ${cloudExtremeBackgroundRangePercent};
+const cloudExtremeStructureScore = ${cloudExtremeStructureScore};
+const cloudExtremeSingleFrameBackgroundRangePercent = ${cloudExtremeSingleFrameBackgroundRangePercent};
+const cloudExtremeSingleFrameStructureScore = ${cloudExtremeSingleFrameStructureScore};
+const cloudUnconfirmedStructureScoreCap = ${cloudUnconfirmedStructureScoreCap};
 
 function getAnalysisMode() {
   return defaultAnalysisMode;

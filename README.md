@@ -1,6 +1,6 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.3.6**.
+Current app version: **0.3.7**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -18,7 +18,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
   - highlight clipping on light frames
 - Detects likely tracking drift from central big/medium stars sharing a common direction, including wider trail checks for guiding, mount, or wind movement
 - Detects repeat drift where close, repeated star peaks appear at shifted positions
-- Detects broad clouds or haze using abnormal background range and large-scale structure, with star loss and mean lift as supporting evidence
+- Detects broad clouds or haze using abnormal background range and large-scale structure, then requires same-shot star-loss confirmation or very strong structure before applying a Light-frame cloud warning
 - Repeat-drift uses a bright-star pass to catch multi-copy stars even when the full-frame orientation signal is weak
 - Applies cloud and tracking penalties, with repeat-drift and cloudy frames scored much lower than ordinary marginal frames
 - Ranks images and labels each one: `Keep`, `Review`, or `Discard`
@@ -82,6 +82,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - Supports common browser images (JPG/PNG/WebP/TIFF), FITS (`.fit`, `.fits`, `.fts`), and uncompressed monolithic XISF (`.xisf`).
 - Folders can be added one after another before or after analysis. When results already exist, clicking **Analyse** processes only newly added supported frames, then refreshes scores and reports for the combined batch. The folder list shows browser-safe relative folder paths because browsers hide full disk paths.
 - **Analysis Mode** defaults to **Standard**. FITS/XISF measurements now use the full-resolution pixel array in both modes. Standard stays faster by sampling expensive whole-frame passes; Expert uses deeper sampling budgets for star size, roundness, repeat drift, flat artefacts, clouds, halos, and histograms.
+- Standard and Expert use the same keeper thresholds and recommendation rules. They can still produce different keeper counts because Expert remeasures the frames with deeper samples and more guide/star candidates, which can change quality scores or penalties around the threshold.
 - Analysis uses a local worker pool when available. Worker count is selected automatically from detected logical CPU cores, reported/estimated memory, and the largest files in the current batch. The app normally leaves one logical core free for the UI and reduces workers when large FITS/XISF files would create memory pressure.
 - In the browser, memory detection is approximate because Safari/Firefox may not expose physical RAM. The app then uses a conservative fallback. In the Electron desktop wrapper, the app can read real local CPU and RAM values and use them for the same automatic worker choice.
 - If Web Workers are unavailable or blocked, analysis falls back to the original local single-thread path.
@@ -105,8 +106,9 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - In v0.3.3, red star overlay circles were made stricter: red means a guide-sample star supporting a `Possible` or `Severe` tracking warning, not every mildly elongated detected star.
 - In v0.3.4, the overlay was changed to show only the guide-star sample used for tracking analysis. Tiny/faint detections are excluded from the overlay and from guiding/tracking decisions.
 - After v0.3.6, the visual overlay includes reliable full-field guide/reference stars again so corners can be inspected manually, while tracking severity remains based on the central guide-star sample. Poorly shaped corner reference stars are orange, not red, because they can be optical/corner behaviour rather than guiding drift.
-- In v0.3.5, cloud detection was retrained from labelled cloudy and clear batches. Background range plus structure is now the warning gate; star-loss and mean-lift are supporting evidence.
+- In v0.3.5, cloud detection was retrained from labelled cloudy and clear batches. Background range plus structure became the warning gate; star-loss and mean-lift were supporting evidence.
 - In v0.3.6, uncompressed monolithic XISF support was added. XISF files use the same scoring pipeline as FITS after their XML header and attached linear pixels are decoded.
+- In v0.3.7, cloud detection was tightened after a labelled clear batch with strong astrophysical/background structure produced false cloud warnings. Smooth structure alone is now capped as unconfirmed; normal cloud warnings need relative star loss, star loss plus mean lift, or an extreme structure case.
 - Sharpness scoring blends FWHM and HFR so tight-star measurements are less fragile.
 - Star metrics use all detected stars in each image; very dense fields can take longer to analyse.
 - Star count is scored relative to the current object-shot/filter group to help catch clouds, haze, fog, or dawn reducing visible stars without comparing different targets.
@@ -122,7 +124,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - Mixed frame-type folders are grouped by type, so `Flat`, `Dark`, `Bias`, and `Dark Flat` frames are not scored as weak light frames.
 - For light frames, sharpness, noise, and star count are relative to the current object-shot/filter group; roundness and clipping use absolute scoring.
 - Light-frame clipping uses both `clipping_percent` and `near_saturation_percent`; the CSV also exports `clipping_pressure` and `clipping_score`. Calibration frames treat saturated bright pixels as calibration evidence, not as light-frame highlight clipping.
-- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when a frame has abnormal background range and structure. Same-object/filter star-loss and mean-brightness lift strengthen that warning, but they no longer trigger cloud warnings by themselves.
+- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when abnormal background range and structure are confirmed by same-object/filter star loss, by star loss plus mean-brightness lift, or by an extreme structure case. Smooth background gradients or real target nebulosity can raise the cloud structure value, but they no longer trigger a warning or score penalty by themselves.
 - Halo detection compares broad annuli around bright stars with the local background. It creates `Possible Halo` or `Likely Halo` warnings and amber preview rings; the same rings appear in the zoom view when the star overlay is enabled. By default it does not change the quality score; enable **Penalise Halo** to apply score penalties.
 - Calibration report cards appear when calibration frames are present. They summarize each Flat/Dark/Bias/Dark Flat set, including frame count, set median, median range, Flat artefact mismatches, median outliers, exposure/temperature match checks, hot-pixel outliers, and gradient/light-leak warnings.
 - Default scoring weights are Sharpness `40%`, Noise `15%`, Roundness `20%`, Star Count `15%`, and Clipping `10%`.

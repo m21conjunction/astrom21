@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-09-14
-Current app version: 0.3.6
+Updated: 2026-09-15
+Current app version: 0.3.7
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -69,6 +69,9 @@ Best options:
 20. **XISF Support**
    Implemented in v0.3.6. The app can analyse uncompressed monolithic `.xisf` files with attached image data, including embedded `FITSKeyword` metadata and common native XISF property aliases. Compressed/distributed XISF decoding remains a future packaging/library topic.
 
+21. **Cloud False-Positive Guard**
+   Implemented in v0.3.7 after a labelled clear batch was incorrectly tagged as cloud because it had strong smooth background/target structure. Cloud warnings now require same-object/filter star-loss support, star loss plus mean lift, or an extreme structure case. Smooth gradients and real nebulosity can still appear in the exported cloud structure metrics, but they no longer apply a cloud warning or score penalty by themselves.
+
 ## Open Ideas
 
 3. **Quality Timeline**
@@ -99,4 +102,4 @@ Best options:
 
 17. **App Versioning And Release Notes**
    Define a versioning approach before packaging: visible app version in the UI, changelog/release notes, calculation-version tracking for CSV exports, and local-settings migration when defaults or score formulas change.
-   Status: started. The visible app/package version is now `0.3.6`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.
+   Status: started. The visible app/package version is now `0.3.7`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.

@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-09-14
+Updated: 2026-09-16
 
-Current app version: **0.3.6**.
+Current app version: **0.3.7**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -145,6 +145,10 @@ Expert mode is intended for borderline or suspicious frames:
 - zoom guide-star overlay payload up to `6000` displayed stars
 
 Switching mode does not re-score old measurements. On the next **Analyse** run, frames measured in the other mode are decoded and measured again.
+
+Standard and Expert use the same final scoring formula, keeper thresholds, and recommendation rules. The difference is measurement depth before scoring. Expert uses larger samples and more guide/star candidates, so it can change the measured sharpness, HFR, roundness, noise, star count, cloud structure, elongation, tracking, and repeat-drift values. A frame close to the keeper threshold can therefore move from Review/Discard to Keep, or the reverse, even though the keeper rule itself did not change.
+
+This is expected behaviour. Standard is the fast screening mode and may be a little jumpier near thresholds because some expensive measurements are sampled more lightly. Expert is slower, but it is usually the better mode for borderline batches, suspicious guiding cases, and final keeper selection.
 
 ### Analysis Execution, Workers, And Stop
 
@@ -709,9 +713,11 @@ The app measures two kinds of evidence:
 1. Large-scale background structure inside the frame.
 2. Same-object and same-filter differences from the rest of the batch, especially lost stars and lifted mean brightness.
 
-In v0.3.5, cloud warnings are trained from labelled cloudy and clear batches. Background range plus structure is the warning gate. Star-loss and mean-lift signals strengthen the warning only after that gate is open, because labelled clean frames can still have relative mean lift or star-count differences.
+In v0.3.5, cloud warnings were trained from labelled cloudy and clear batches. Background range plus structure became the warning gate. Star-loss and mean-lift signals strengthened the warning only after that gate was open, because labelled clean frames can still have relative mean lift or star-count differences.
 
 In v0.3.6, XISF files use the same cloud calculation after their linear pixels are decoded.
+
+In v0.3.7, the cloud gate was tightened after a labelled clear batch showed strong background/target structure but no actual cloud. Background range and structure are still measured, but they no longer create a normal cloud warning by themselves. A warning now needs same-object/filter star loss, star loss plus mean lift, or an extreme structure case. This reduces false positives on real nebulosity, smooth sky gradients, and optical background structure.
 
 ### Large-Scale Background Structure
 
@@ -780,7 +786,7 @@ cloud_mean_lift_score =
         0
 ```
 
-With only one or two light frames in an object-shot/filter group, the app cannot know whether a lower star count is real cloud loss or simply the normal value for that target/filter. In that case, relative cloud evidence is disabled and the cloud warning can only come from single-frame background range and structure.
+With only one or two light frames in an object-shot/filter group, the app cannot know whether a lower star count is real cloud loss or simply the normal value for that target/filter. In that case, relative cloud evidence is disabled and ordinary range/structure alone is treated conservatively. Only an extreme structure case can raise a cloud warning without normal peer confirmation.
 
 The final cloud score blends frame-internal structure with batch-relative evidence:
 
@@ -796,7 +802,7 @@ cloud_score =
 
 The result is clamped to `0..1`.
 
-The labelled batches showed that `cloud_background_range_percent` and `cloud_structure_score` separated cloudy and clear frames more reliably than star count alone. The current threshold gate is:
+The labelled batches showed that star count alone is fragile, but a later clear batch also showed that background range/structure alone is too aggressive for targets with real nebulosity or smooth gradients. The current threshold gate is:
 
 ```text
 range_structure_possible =
@@ -808,34 +814,60 @@ range_structure_likely =
     and cloud_structure_score >= 0.16
 
 support_evidence =
-    cloud_star_loss_score >= 0.15
-    or cloud_mean_lift_score >= 0.35
+    cloud_star_loss_score >= 0.24
+    or (
+        cloud_star_loss_score >= 0.18
+        and cloud_mean_lift_score >= 0.55
+    )
 
 strong_support_evidence =
-    cloud_star_loss_score >= 0.30
-    or cloud_mean_lift_score >= 0.55
+    cloud_star_loss_score >= 0.36
+    or (
+        cloud_star_loss_score >= 0.24
+        and cloud_mean_lift_score >= 0.55
+    )
+
+extreme_structure_evidence =
+    (
+        cloud_background_range_percent >= 10.5
+        and cloud_structure_score >= 0.43
+        and cloud_mean_lift_score >= 0.55
+    )
+    or (
+        cloud_background_range_percent >= 14.5
+        and cloud_structure_score >= 0.55
+    )
 ```
 
 These gates raise the displayed cloud score floor:
 
 ```text
-if range_structure_likely:
+if extreme_structure_evidence or (range_structure_likely and support_evidence):
     cloud_score = max(cloud_score, 0.72)
     if support_evidence:
         cloud_score = max(cloud_score, 0.78)
-else if range_structure_possible:
+else if range_structure_possible and support_evidence:
     cloud_score = max(cloud_score, 0.44)
     if support_evidence:
         cloud_score = max(cloud_score, 0.52)
     if strong_support_evidence:
         cloud_score = max(cloud_score, 0.62)
+else if range_structure_possible:
+    cloud_score = min(cloud_score, 0.34)
 ```
+
+That final cap is important: a frame can have a measurable smooth background gradient and still show `No cloud warning` if the same-shot stars do not support a cloud interpretation.
 
 Warning levels:
 
 ```text
 Likely Cloud if:
-    range_structure_likely
+    extreme_structure_evidence
+    or (
+        range_structure_likely
+        and support_evidence
+        and strong_support_evidence
+    )
     or (
         range_structure_possible
         and strong_support_evidence
@@ -847,6 +879,7 @@ Likely Cloud if:
 
 Possible Cloud if:
     range_structure_possible
+    and support_evidence
 ```
 
 Cloud penalties applied to light-frame quality:
@@ -861,7 +894,7 @@ Possible Cloud:
     final quality is capped at 55
 ```
 
-Important caveat: very strong nebulosity, severe gradients, or aggressive moon/light-pollution gradients can look cloud-like. The same-object/filter star-count and mean comparisons reduce that bias because stable target structure should usually be present in every sub of the same target and filter, while passing clouds change from frame to frame.
+Important caveat: very strong nebulosity, severe gradients, or aggressive moon/light-pollution gradients can still look cloud-like in the structure metrics. The same-object/filter star-count and mean comparisons reduce that bias because stable target structure should usually be present in every sub of the same target and filter, while passing clouds change from frame to frame. Mean lift alone is no longer enough, because a clear batch can brighten over time without clouds.
 
 ## Halo Warning
 
@@ -1377,6 +1410,8 @@ Unknown: 70
 ```
 
 Users can change these with per-filter numeric entry boxes.
+
+The keeper thresholds do not change between Standard and Expert analysis modes. If Expert reports more keepers than Standard, the cause is changed measurements or penalties, not a looser keeper rule. Typical causes are a deeper star sample improving HFR/roundness, a more stable noise estimate, fewer false tracking/cloud penalties, or a different relative star-count normalisation inside the same object-shot/filter group.
 
 For light frames:
 
@@ -2412,7 +2447,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.3.6`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.3.7`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
