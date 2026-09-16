@@ -51,8 +51,8 @@ const zoomTitle = document.getElementById("zoomTitle");
 const zoomStatus = document.getElementById("zoomStatus");
 const zoomImage = document.getElementById("zoomImage");
 const zoomMetrics = document.getElementById("zoomMetrics");
-const zoomRange = document.getElementById("zoomRange");
-const zoomValue = document.getElementById("zoomValue");
+const zoomStretch = document.getElementById("zoomStretch");
+const zoomStretchValue = document.getElementById("zoomStretchValue");
 const zoomStarOverlayBtn = document.getElementById("zoomStarOverlayBtn");
 const zoomMagnifierBtn = document.getElementById("zoomMagnifierBtn");
 const zoomMagnifierPower = document.getElementById("zoomMagnifierPower");
@@ -82,7 +82,10 @@ const state = {
   filterThresholds: {},
   zoomedKey: null,
   zoomRequestId: 0,
+  zoomLensRequestId: 0,
+  zoomLensStretchUserSet: false,
   magnifierActive: false,
+  zoomLensRefreshTimer: null,
   starOverlayActive: false,
   selectedOverlayStarId: null,
   previewRefreshTimer: null,
@@ -93,7 +96,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.3.10";
+const appVersion = "0.3.12";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -345,8 +348,6 @@ const workerMemoryProfiles = {
 };
 const zoomDetailMaxDimension = 9000;
 const zoomDetailMaxPixels = 48_000_000;
-const zoomSliderMaxPercent = 300;
-const zoomInspectionStretchScale = 0.45;
 const zoomLensSize = 220;
 const defaultZoomLensMagnification = 4;
 const zoomLensMagnificationLevels = [2, 4, 8, 12, 16];
@@ -2008,6 +2009,16 @@ function applyStoredSettings() {
   if (zoomMagnifierPower && zoomLensMagnificationLevels.includes(Number(settings.zoomMagnifierPower))) {
     zoomMagnifierPower.value = String(Number(settings.zoomMagnifierPower));
   }
+  if (zoomStretch) {
+    const savedLensStretch = Number(settings.zoomLensStretch);
+    state.zoomLensStretchUserSet = Boolean(settings.zoomLensStretchUserSet) && Number.isFinite(savedLensStretch);
+    if (state.zoomLensStretchUserSet) {
+      setRangeValue(zoomStretch, savedLensStretch);
+    } else {
+      syncZoomLensStretchFromPreview();
+    }
+    updateZoomStretchLabel();
+  }
   if (haloPenaltyCheckbox) {
     haloPenaltyCheckbox.checked = Boolean(settings.haloPenalty);
   }
@@ -2044,6 +2055,8 @@ function resetDefaultPercentages() {
 
   updateWeightLabels();
   updatePreviewStretchLabel();
+  state.zoomLensStretchUserSet = false;
+  syncZoomLensStretchFromPreview();
   saveSettings();
   renderFilterPanel();
 
@@ -2081,6 +2094,8 @@ function saveSettings() {
         haloPenalty: haloPenaltyCheckbox ? haloPenaltyCheckbox.checked : false,
         csvSeparator: getCsvSeparatorKey(),
         zoomMagnifierPower: zoomMagnifierPower ? Number(zoomMagnifierPower.value) : defaultZoomLensMagnification,
+        zoomLensStretch: zoomStretch ? getZoomLensStretchValue() : defaultPreviewStretch,
+        zoomLensStretchUserSet: state.zoomLensStretchUserSet,
         starOverlayActive: state.starOverlayActive
       })
     );
@@ -2130,8 +2145,27 @@ function getPreviewStretchSettings() {
   return stretchSettingsFromStrength(getPreviewStretchValue() / 100);
 }
 
+function getZoomLensStretchValue() {
+  const fallback = getPreviewStretchValue();
+  return clamp(Number(zoomStretch ? zoomStretch.value : fallback) || 0, 0, 100);
+}
+
+function updateZoomStretchLabel() {
+  if (zoomStretchValue) {
+    zoomStretchValue.textContent = `${getZoomLensStretchValue()}%`;
+  }
+}
+
+function syncZoomLensStretchFromPreview() {
+  if (!zoomStretch || state.zoomLensStretchUserSet) {
+    return;
+  }
+  setRangeValue(zoomStretch, getPreviewStretchValue());
+  updateZoomStretchLabel();
+}
+
 function getInspectionStretchSettings() {
-  return stretchSettingsFromStrength((getPreviewStretchValue() / 100) * zoomInspectionStretchScale);
+  return stretchSettingsFromStrength(getZoomLensStretchValue() / 100);
 }
 
 function getWeights() {
@@ -2920,6 +2954,15 @@ function starLooksPoorInCorner(star, width, height) {
     fwhmRoundness < cornerReferenceFwhmRoundnessWarningLimit ||
     axisRatio > cornerReferenceAxisRatioWarningLimit
   );
+}
+
+function starLooksBorderlineForOverlay(star) {
+  const roundness = Number.isFinite(star.roundness) ? star.roundness : 1;
+  const fwhmRoundness = Number.isFinite(star.fwhmRoundness) ? star.fwhmRoundness : roundness;
+  const axisRatio = starTrackingAxisRatio(star);
+  const trailAxisRatio = Number.isFinite(star.trailAxisRatio) ? star.trailAxisRatio : axisRatio;
+
+  return roundness < 0.82 || fwhmRoundness < 0.82 || axisRatio > 1.28 || trailAxisRatio > 1.32;
 }
 
 function trackingRegionLabel(radius) {
@@ -3833,6 +3876,7 @@ function computeStarRoundnessAndTracking(gray, width, height, mean, std, options
       trackingSample: trackingStarIds.has(star.id),
       elongated: trackingAlert && trackingStarIds.has(star.id) && starLooksElongated(star),
       cornerIssue: !trackingStarIds.has(star.id) && starLooksPoorInCorner(star, width, height),
+      borderline: starLooksBorderlineForOverlay(star),
       repeated: repeatedStarIds.has(star.id)
     })),
     repeatPairs: (repeatDrift.repeatPairs || []).filter(
@@ -6177,42 +6221,8 @@ function revokeZoomLensDetail(result) {
 
 function revokeZoomDetailsForResults(results) {
   for (const result of results || []) {
-    revokeZoomFullDetail(result);
+    revokeZoomDetail(result);
   }
-}
-
-function fittedZoomWidth() {
-  const naturalWidth = zoomImage.naturalWidth || 1;
-  const naturalHeight = zoomImage.naturalHeight || 1;
-  const stageWidth = zoomStage ? zoomStage.clientWidth : 0;
-  const stageHeight = zoomStage ? zoomStage.clientHeight : 0;
-
-  if (stageWidth <= 0 || stageHeight <= 0 || naturalWidth <= 1 || naturalHeight <= 1) {
-    return Math.max(naturalWidth, stageWidth, 1);
-  }
-
-  const fitScale = Math.min(stageWidth / naturalWidth, stageHeight / naturalHeight, 1);
-  return Math.max(1, naturalWidth * fitScale);
-}
-
-function maxNativeZoomPercent() {
-  const fitWidth = fittedZoomWidth();
-  const naturalWidth = zoomImage.naturalWidth || 1;
-  if (fitWidth <= 0 || naturalWidth <= 1) {
-    return zoomSliderMaxPercent;
-  }
-  const nativeLimit = Math.floor((naturalWidth / fitWidth) * 100);
-  const steppedLimit = Math.floor(nativeLimit / 25) * 25;
-  return clamp(steppedLimit || 100, 100, zoomSliderMaxPercent);
-}
-
-function syncZoomRangeLimit() {
-  if (!zoomRange) {
-    return zoomSliderMaxPercent;
-  }
-  const maxZoom = maxNativeZoomPercent();
-  zoomRange.max = String(maxZoom);
-  return maxZoom;
 }
 
 function activeZoomResult() {
@@ -6242,7 +6252,8 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
         ? `, trail ratio ${formatMetric(star.trailAxisRatio, 2)}`
         : "";
     const cornerText = star.cornerIssue ? ", corner shape warning" : "";
-    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%${trailText}${cornerText}`;
+    const borderlineText = star.borderline && !star.cornerIssue ? ", borderline shape" : "";
+    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%${trailText}${cornerText}${borderlineText}`;
     return;
   }
   if (fallbackStatus) {
@@ -6253,13 +6264,19 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
     zoomStatus.textContent = "";
     return;
   }
-  if (result && result.zoomDetail && Number.isFinite(result.zoomDetailWidth) && Number.isFinite(result.zoomDetailHeight)) {
-    zoomStatus.textContent = `Inspection detail ${Math.round(result.zoomDetailWidth)} x ${Math.round(
-      result.zoomDetailHeight
-    )} px; zoom capped at native detail scale`;
+  if (
+    result.zoomLensDetail &&
+    Number.isFinite(result.zoomLensDetailWidth) &&
+    Number.isFinite(result.zoomLensDetailHeight)
+  ) {
+    zoomStatus.textContent = `Grid preview; magnifier detail ${Math.round(result.zoomLensDetailWidth)} x ${Math.round(
+      result.zoomLensDetailHeight
+    )} px`;
     return;
   }
-  zoomStatus.textContent = result && result.zoomDetail ? "High-resolution detail view" : "Preparing high-resolution detail view...";
+  zoomStatus.textContent = state.magnifierActive
+    ? "Grid preview; move over the image to prepare magnifier detail"
+    : "Grid preview; enable Magnifier for high-resolution inspection";
 }
 
 function clearZoomStarOverlay() {
@@ -6367,7 +6384,17 @@ function drawZoomStarOverlay() {
   const manyStars = stars.length > 7000;
   for (const star of stars) {
     const selected = star.id === state.selectedOverlayStarId;
-    const radius = selected ? 7 : star.repeated ? 4.8 : star.elongated ? 4 : star.cornerIssue ? 3.6 : manyStars ? 2 : 2.8;
+    const radius = selected
+      ? 7
+      : star.repeated
+        ? 4.8
+        : star.elongated
+          ? 4
+          : star.cornerIssue || star.borderline
+            ? 3.6
+            : manyStars
+              ? 2
+              : 2.8;
     context.strokeStyle = selected
       ? "rgba(255, 255, 255, 0.98)"
       : star.repeated
@@ -6376,7 +6403,9 @@ function drawZoomStarOverlay() {
           ? "rgba(248, 113, 113, 0.88)"
           : star.cornerIssue
             ? "rgba(251, 146, 60, 0.94)"
-            : "rgba(45, 212, 191, 0.72)";
+            : star.borderline
+              ? "rgba(245, 158, 11, 0.76)"
+              : "rgba(45, 212, 191, 0.72)";
     context.lineWidth = selected ? 2.2 : 1.2;
     context.beginPath();
     context.arc(star.x * cssWidth, star.y * cssHeight, radius, 0, Math.PI * 2);
@@ -6432,29 +6461,16 @@ function nearestOverlayStar(event) {
   return bestStar && bestDistanceSq <= maxDistance * maxDistance ? bestStar : null;
 }
 
-function setZoomLevel(value) {
-  const maxZoom = syncZoomRangeLimit();
-  const zoom = clamp(Number(value) || 100, 100, maxZoom);
-  zoomRange.value = String(zoom);
-  zoomValue.textContent = `${zoom}%`;
-
-  if (zoom === 100) {
-    zoomImage.classList.add("fit");
-    zoomImage.style.width = "";
-    updateZoomLensBackground();
-    scheduleZoomStarOverlayDraw();
-    return;
-  }
-
-  zoomImage.classList.remove("fit");
-  zoomImage.style.width = `${Math.round(fittedZoomWidth() * (zoom / 100))}px`;
+function setZoomLevel() {
+  zoomImage.classList.add("fit");
+  zoomImage.style.width = "";
   updateZoomLensBackground();
   scheduleZoomStarOverlayDraw();
 }
 
 function updateZoomContent(result) {
   zoomTitle.textContent = result.fileName;
-  zoomImage.src = result.zoomDetail || result.thumbnail;
+  zoomImage.src = result.thumbnail;
   zoomImage.alt = `Zoomed preview for ${result.fileName}`;
   zoomMetrics.innerHTML = metricsMarkup(result);
   updateZoomStatus(result);
@@ -6462,42 +6478,7 @@ function updateZoomContent(result) {
   scheduleZoomStarOverlayDraw();
 }
 
-async function prepareZoomDetail(result, requestId) {
-  if (result.zoomDetail) {
-    if (state.zoomRequestId === requestId && state.zoomedKey === getResultKey(result)) {
-      updateZoomContent(result);
-      setZoomLevel(zoomRange.value);
-    }
-    return;
-  }
-
-  try {
-    const detail = await buildZoomDetail(result);
-    if (state.zoomRequestId !== requestId || state.zoomedKey !== getResultKey(result)) {
-      if (detail.objectUrl && typeof URL.revokeObjectURL === "function") {
-        URL.revokeObjectURL(detail.url);
-      }
-      return;
-    }
-    revokeZoomDetail(result);
-    result.zoomDetail = detail.url;
-    result.zoomDetailObjectUrl = detail.objectUrl;
-    result.zoomDetailWidth = detail.width;
-    result.zoomDetailHeight = detail.height;
-    zoomImage.src = detail.url;
-    updateZoomStatus(result);
-    setZoomLevel(zoomRange.value);
-    if (state.magnifierActive) {
-      prepareZoomLensDetail(result, requestId);
-    }
-  } catch (error) {
-    if (state.zoomRequestId === requestId) {
-      updateZoomStatus(result, "Using grid preview");
-    }
-  }
-}
-
-async function prepareZoomLensDetail(result, requestId) {
+async function prepareZoomLensDetail(result, requestId, lensRequestId = state.zoomLensRequestId) {
   if (!result || result.zoomLensDetail || result.zoomLensDetailPending) {
     return;
   }
@@ -6509,7 +6490,11 @@ async function prepareZoomLensDetail(result, requestId) {
 
   try {
     const detail = await buildZoomLensDetail(result);
-    if (state.zoomRequestId !== requestId || state.zoomedKey !== getResultKey(result)) {
+    if (
+      state.zoomRequestId !== requestId ||
+      state.zoomLensRequestId !== lensRequestId ||
+      state.zoomedKey !== getResultKey(result)
+    ) {
       if (detail.objectUrl && typeof URL.revokeObjectURL === "function") {
         URL.revokeObjectURL(detail.url);
       }
@@ -6533,23 +6518,24 @@ async function prepareZoomLensDetail(result, requestId) {
 }
 
 function openZoom(result) {
+  cancelZoomLensDetailRefresh();
   state.zoomedKey = getResultKey(result);
   state.selectedOverlayStarId = null;
   state.zoomRequestId += 1;
+  state.zoomLensRequestId += 1;
+  syncZoomLensStretchFromPreview();
   updateZoomContent(result);
   zoomOverlay.hidden = false;
   document.body.classList.add("modal-open");
-  setZoomLevel(100);
-  prepareZoomDetail(result, state.zoomRequestId);
-  if (state.magnifierActive) {
-    prepareZoomLensDetail(result, state.zoomRequestId);
-  }
+  setZoomLevel();
   zoomCloseBtn.focus();
 }
 
 function closeZoom() {
+  cancelZoomLensDetailRefresh();
   state.zoomedKey = null;
   state.zoomRequestId += 1;
+  state.zoomLensRequestId += 1;
   zoomOverlay.hidden = true;
   zoomImage.removeAttribute("src");
   zoomImage.alt = "";
@@ -6566,6 +6552,37 @@ function hideZoomLens() {
   if (zoomLens) {
     zoomLens.hidden = true;
   }
+}
+
+function cancelZoomLensDetailRefresh() {
+  if (state.zoomLensRefreshTimer) {
+    window.clearTimeout(state.zoomLensRefreshTimer);
+    state.zoomLensRefreshTimer = null;
+  }
+}
+
+function scheduleZoomLensDetailRefresh(delay = 220) {
+  cancelZoomLensDetailRefresh();
+  const result = activeZoomResult();
+  if (!result) {
+    return;
+  }
+
+  state.zoomLensRequestId += 1;
+  const lensRequestId = state.zoomLensRequestId;
+  revokeZoomLensDetail(result);
+  updateZoomLensBackground();
+  hideZoomLens();
+
+  if (!state.magnifierActive) {
+    return;
+  }
+
+  updateZoomStatus(result, "Preparing magnifier detail...");
+  state.zoomLensRefreshTimer = window.setTimeout(() => {
+    state.zoomLensRefreshTimer = null;
+    prepareZoomLensDetail(result, state.zoomRequestId, lensRequestId);
+  }, delay);
 }
 
 function updateZoomLensBackground() {
@@ -6593,7 +6610,7 @@ function setMagnifierActive(active) {
   }
   const result = activeZoomResult();
   if (result) {
-    prepareZoomLensDetail(result, state.zoomRequestId);
+    prepareZoomLensDetail(result, state.zoomRequestId, state.zoomLensRequestId);
   }
   updateZoomLensBackground();
 }
@@ -6606,7 +6623,7 @@ function updateZoomLens(event) {
   const result = activeZoomResult();
   if (!result || !result.zoomLensDetail) {
     if (result && !result.zoomLensDetailPending) {
-      prepareZoomLensDetail(result, state.zoomRequestId);
+      prepareZoomLensDetail(result, state.zoomRequestId, state.zoomLensRequestId);
     }
     updateZoomStatus(result, "Preparing magnifier detail...");
     hideZoomLens();
@@ -6696,6 +6713,7 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
   const results = state.results.slice();
   const total = results.length;
   const chunkSize = previewRefreshChunkSize(total);
+  const lensFollowsPreviewStretch = !state.zoomLensStretchUserSet;
   let processed = 0;
   let lastStatusAt = 0;
 
@@ -6709,7 +6727,10 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
     const chunk = results.slice(index, index + chunkSize);
     for (const result of chunk) {
       refreshResultThumbnail(result);
-      revokeZoomDetail(result);
+      revokeZoomFullDetail(result);
+      if (lensFollowsPreviewStretch) {
+        revokeZoomLensDetail(result);
+      }
     }
     updatePreviewImagesForResults(chunk);
     processed += chunk.length;
@@ -6730,9 +6751,11 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
   if (state.zoomedKey) {
     const result = findResultByKey(state.zoomedKey);
     if (result) {
+      cancelZoomLensDetailRefresh();
       state.zoomRequestId += 1;
+      state.zoomLensRequestId += 1;
+      syncZoomLensStretchFromPreview();
       updateZoomContent(result);
-      prepareZoomDetail(result, state.zoomRequestId);
     }
   }
 
@@ -6751,6 +6774,7 @@ function schedulePreviewRefresh(delay = 260, doneText = "Preview stretch refresh
 
 function onPreviewStretchChanged() {
   updatePreviewStretchLabel();
+  syncZoomLensStretchFromPreview();
   saveSettings();
   if (state.results.length === 0) {
     return;
@@ -8198,6 +8222,7 @@ function analysisWorkerFunctionSource() {
     normalizedStarCornerAxes,
     starInCornerReferenceZone,
     starLooksPoorInCorner,
+    starLooksBorderlineForOverlay,
     selectStarsForOverlay,
     mergeUniqueStars,
     selectStarsForFullFieldOverlay,
@@ -9627,9 +9652,14 @@ zoomOverlay.addEventListener("click", (event) => {
   }
 });
 
-zoomRange.addEventListener("input", () => {
-  setZoomLevel(zoomRange.value);
-});
+if (zoomStretch) {
+  zoomStretch.addEventListener("input", () => {
+    state.zoomLensStretchUserSet = true;
+    updateZoomStretchLabel();
+    saveSettings();
+    scheduleZoomLensDetailRefresh();
+  });
+}
 
 if (zoomMagnifierBtn) {
   zoomMagnifierBtn.addEventListener("click", () => {
@@ -9668,7 +9698,7 @@ if (zoomStage) {
 
 zoomImage.addEventListener("load", () => {
   if (!zoomOverlay.hidden) {
-    setZoomLevel(zoomRange.value);
+    setZoomLevel();
     updateZoomLensBackground();
     scheduleZoomStarOverlayDraw();
   }
@@ -9676,7 +9706,7 @@ zoomImage.addEventListener("load", () => {
 
 window.addEventListener("resize", () => {
   if (!zoomOverlay.hidden) {
-    setZoomLevel(zoomRange.value);
+    setZoomLevel();
     scheduleZoomStarOverlayDraw();
   }
 });

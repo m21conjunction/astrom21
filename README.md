@@ -1,6 +1,6 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.3.10**.
+Current app version: **0.3.12**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -28,7 +28,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Scores clipping from hard-clipped and near-saturated highlights, with FITS/XISF clipping checks made during the full-resolution pixel read
 - Shows amber preview/zoom rings and a warning when broad halos are suspected around bright stars
 - Lets you adjust preview stretch after analysis and click any preview to inspect it in a higher-resolution zoom view
-- Adds inspection tools for guide-star overlays, repeat-drift markers, clicked-star FWHM/HFR readouts, native-capped zoom, and a 2x/4x/8x/12x/16x magnifier lens
+- Adds inspection tools for guide-star overlays, repeat-drift markers, clicked-star FWHM/HFR readouts, fit-to-window zoom, lens stretch control, and a 2x/4x/8x/12x/16x magnifier lens
 - Detects FITS/XISF filters, shows filter tabs, and keeps the All view available
 - Detects FITS/XISF light-frame RA/DEC, groups lights by object shot, and compares light scores inside the same object shot and filter
 - Uses focal length and pixel size metadata, or WCS pixel scale when available, to derive the allowed RA/DEC deviation for object-shot grouping
@@ -43,7 +43,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Checks calibration compatibility against light frames: darks need matching exposure and camera temperature; flats, bias, and dark flats check camera temperature only
 - Lets you adjust keeper score thresholds with per-filter numeric entry boxes
 - Can copy selected images into filter-named and/or frame-type output folders
-- Remembers the scoring and preview sliders, plus the sharpness mode, on the same browser
+- Remembers the scoring, preview, and magnifier lens stretch sliders, plus the sharpness mode, on the same browser
 - Can restore the default percentage values from the toolbar
 - Shows help markers beside the core scoring controls with calculation notes
 - Exports a CSV report with all analysis parameters, including calculation version and analysis pixel source
@@ -95,8 +95,8 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - XISF support targets uncompressed monolithic `.xisf` files with attached image data. Supported sample formats are `UInt8`, `Int8`, `UInt16`, `Int16`, `UInt32`, `Int32`, `Float32`, and `Float64`. Compressed, distributed, external-block, complex, and 64-bit integer XISF data are reported as unsupported for now.
 - Preview stretch is adjustable after analysis; `0%` is neutral/linear and higher values progressively lift faint detail.
 - Preview images are rendered losslessly to avoid compression blocks in the grid and zoom viewer.
-- The zoom viewer uses a higher-resolution detail render than the grid preview, up to 9000 pixels on the longest side with a 48 MP safety budget. The full zoom preview keeps the same stretch as the grid preview, while normal zoom is capped so it does not enlarge beyond native detail pixels. The magnifier lens uses a separate gentler-stretch source so high magnification does not over-amplify faint background structure.
-- In the zoom star overlay, teal/green circles are normal guide/reference stars; orange circles are reliable corner reference stars with poor local shape, useful for spotting coma/field curvature/tilt; red circles are central guide-sample stars supporting a `Possible` or `Severe` tracking warning; yellow circles or links are repeat-drift candidates; and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. Tiny/faint detections are not circled because they are not reliable enough for guiding diagnosis.
+- The zoom viewer keeps the full preview stable by showing the same grid-stretch thumbnail fit-to-window. The magnifier lens uses a separate high-resolution source, up to 9000 pixels on the longest side with a 48 MP safety budget, controlled by the **Lens Stretch** slider.
+- In the zoom star overlay, teal/green circles are clean guide/reference stars; amber circles are borderline-shape reference stars; orange circles are reliable corner reference stars with poor local shape, useful for spotting coma/field curvature/tilt; red circles are central guide-sample stars supporting a `Possible` or `Severe` tracking warning; yellow circles or links are repeat-drift candidates; and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. Tiny/faint detections are not circled because they are not reliable enough for guiding diagnosis.
 - Star overlays and star/tracking/halo calculations are only used for light frames; Flats, Biases, Darks, and Dark Flats are judged with calibration-specific measures instead.
 - FITS/XISF sharpness, roundness, HFR, and clipping are scored from linear image data, not from the stretched preview image.
 - FITS/XISF clipping and near-saturation are measured on the full-resolution data while the frame is decoded, so small saturated star cores are not averaged away.
@@ -112,6 +112,8 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - In v0.3.8, the preview inspection view was sharpened: detail renders can be larger, normal zoom is capped to avoid fake enlargement, and the magnifier adds 12x and 16x levels.
 - In v0.3.9, the inspection detail render uses a gentler stretch than the grid preview, reducing the over-stretched look when the magnifier is active.
 - In v0.3.10, the full zoom preview was restored to the normal grid stretch. Only the magnifier lens uses the gentler stretch, and it waits for its high-resolution source instead of magnifying the temporary low-resolution thumbnail.
+- In v0.3.11, the zoom slider was removed. The opened preview now stays fit-to-window, and that toolbar space is used for a **Lens Stretch** slider that rebuilds only the magnifier source.
+- In v0.3.12, the opened full preview no longer swaps to a delayed high-resolution render. It stays visually identical to the grid-stretch preview, improving open speed and avoiding a delayed stretch/brightness change. High-resolution rendering is reserved for the magnifier lens, and borderline overlay stars are amber instead of green.
 - Sharpness scoring blends FWHM and HFR so tight-star measurements are less fragile.
 - Star metrics use all detected stars in each image; very dense fields can take longer to analyse.
 - Star count is scored relative to the current object-shot/filter group to help catch clouds, haze, fog, or dawn reducing visible stars without comparing different targets.

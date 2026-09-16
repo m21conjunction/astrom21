@@ -2,7 +2,7 @@
 
 Updated: 2026-09-16
 
-Current app version: **0.3.10**.
+Current app version: **0.3.12**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -104,8 +104,8 @@ FITS and XISF frames can be large, so the app keeps separate visual and measurem
 
 - Full-resolution analysis pixels: the original FITS/XISF width and height.
 - Preview image: longest side up to `1400` pixels.
-- Zoom detail image: longest side up to `9000` pixels, with a `48 MP` pixel-budget cap.
-- Normal zoom view: capped at `300%` and further limited to avoid enlarging beyond the native detail render.
+- Full zoom view: fit-to-window display using the stable grid-stretch preview thumbnail.
+- Magnifier detail image: longest side up to `9000` pixels, with a `48 MP` pixel-budget cap.
 - Magnifier lens: selectable `2x`, `4x`, `8x`, `12x`, and `16x`.
 
 Preview and zoom images are downsampled only for display. FITS measurements in v0.3.0 and XISF measurements in v0.3.6 use the full-resolution pixel grid in both Standard and Expert modes.
@@ -230,18 +230,21 @@ Preview stretch does not affect scoring. It only affects thumbnails and inspecti
 
 At `0%` preview stretch, the preview is neutral/linear.
 
-Grid thumbnails and the full zoom preview use the selected stretch value directly. The magnifier lens uses a separate high-resolution source with a gentler stretch:
+Grid thumbnails and the full zoom preview use the selected preview stretch value directly. The magnifier lens uses a separate high-resolution source controlled by the zoom dialog's `Lens Stretch` slider.
 
 ```text
-magnifier_strength = (preview_stretch / 100) * 0.45
+grid_strength = preview_stretch / 100
+magnifier_strength = lens_stretch / 100
 ```
 
-That keeps the magnifier from over-amplifying the background while the full preview stays visually consistent with the grid card. At `0%`, the grid, full zoom preview, and magnifier all remain neutral/linear.
+The lens stretch follows the global preview stretch until the user adjusts it manually. After manual adjustment, the lens stretch is remembered in local browser settings. The magnifier lens stays hidden while its high-resolution lens source is being prepared, so it does not magnify the temporary low-resolution thumbnail.
+
+This keeps the full preview visually consistent with the grid card, while letting the magnifier use a lower or higher stretch for artifact inspection. At `0%`, the grid, full zoom preview, and magnifier all remain neutral/linear.
 
 For stretch values above `0%`:
 
 ```text
-strength = preview_stretch / 100               for grid thumbnails and full zoom preview
+strength = grid_strength                       for grid thumbnails and full zoom preview
 strength = magnifier_strength                  for the magnifier lens source
 low_percentile = strength * 0.01
 high_percentile = 1 - strength * 0.015
@@ -735,6 +738,10 @@ In v0.3.8, the preview inspection workflow was adjusted for better visual detail
 In v0.3.9, the inspection detail render uses a gentler stretch than the grid thumbnail. This avoids over-stretching faint background structure when the magnifier is active, especially at `12x` or `16x`.
 
 In v0.3.10, the full zoom preview was restored to the normal grid stretch, and the gentler stretch was moved to a separate magnifier-only high-resolution source. The lens stays hidden while that source is being prepared, instead of magnifying the temporary low-resolution thumbnail.
+
+In v0.3.11, the normal zoom slider was removed. The zoom dialog now keeps the full preview fit-to-window and uses that space for a `Lens Stretch` slider. The full preview keeps the same stretch as the grid; only the magnifier source is rebuilt when the lens stretch changes.
+
+In v0.3.12, the full zoom preview stopped replacing the grid thumbnail with a delayed high-resolution full-frame render. The opened preview now remains visually stable and identical to the grid-stretch preview, while high-resolution rendering is reserved for the magnifier lens. This avoids a delayed stretch/brightness change and makes opening the preview lighter.
 
 ### Large-Scale Background Structure
 
@@ -2301,6 +2308,15 @@ For light frames, the zoom overlay shows the central guide-star sample used for 
 
 Very small or faint detections are excluded from this overlay because their shapes are not reliable enough for guiding diagnosis. They can still contribute to the raw detected star count, but they are not used for tracking/trailing/repeat-drift decisions.
 
+Overlay colour meanings:
+
+- teal/green: clean guide/reference star
+- amber: borderline-shape reference star that should not be treated as confidently clean
+- orange: corner reference star with poor local shape, useful for optical field inspection
+- red: central guide-sample star supporting a `Possible` or `Severe` tracking warning
+- yellow: repeat-drift candidate or repeat link
+- white: clicked/selected star
+
 Important separation:
 
 - Tracking severity is still calculated from central big/medium guide stars.
@@ -2464,7 +2480,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.3.10`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.3.12`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
