@@ -1,7 +1,7 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-09-16
+Updated: 2026-09-17
 Current app version: 0.3.12
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
@@ -111,3 +111,9 @@ Best options:
 17. **App Versioning And Release Notes**
    Define a versioning approach before packaging: visible app version in the UI, changelog/release notes, calculation-version tracking for CSV exports, and local-settings migration when defaults or score formulas change.
    Status: started. The visible app/package version is now `0.3.12`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.
+
+23. **Offline Moonlight Context**
+   Calculate Moon conditions locally, without an internet connection. Use each frame's observation time from FITS/XISF metadata (`DATE-OBS`, `DATE-AVG`, or `DATE-END`, with exposure midpoint and filename fallbacks) and an observing location configured by the user or read from available site-coordinate headers.
+   If the files do not contain usable observing-site coordinates, ask the user for latitude and longitude or let them choose a city from a bundled offline location list. Show the resolved coordinates for confirmation, support north/south and east/west clearly, and save named observing sites locally so the user does not have to enter the same location for every batch. City selection must not depend on online geocoding and should allow manual coordinates for observatories or other locations outside the bundled list.
+   Show Moon illumination, phase/age, altitude, azimuth, and Moon-to-target angular separation when the Light frame has usable RA/DEC coordinates. Location is not needed for the illuminated fraction itself, but it is required to determine whether the Moon was above the local horizon and how strongly it could affect the photographed field.
+   Add the Moon data to frame details, session comparisons, and CSV export. Derive a filter-aware moonlight-risk indicator: broadband/OSC frames are generally more sensitive, while narrowband filters such as Ha and SII are less affected. Start with this as context and a warning rather than an automatic score penalty; a future optional **Penalise Moonlight** setting can be evaluated against real labelled batches.
