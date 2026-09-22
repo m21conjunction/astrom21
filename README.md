@@ -1,6 +1,6 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.3.12**.
+Current app version: **0.3.13**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -18,7 +18,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
   - highlight clipping on light frames
 - Detects likely tracking drift from central big/medium stars sharing a common direction, including wider trail checks for guiding, mount, or wind movement
 - Detects repeat drift where close, repeated star peaks appear at shifted positions
-- Detects broad clouds or haze using abnormal background range and large-scale structure, then requires same-shot star-loss confirmation or very strong structure before applying a Light-frame cloud warning
+- Detects broad clouds or haze using median-based background range and large-scale structure, then requires same-shot star-loss confirmation or very strong structure before applying a Light-frame cloud warning
 - Repeat-drift uses a bright-star pass to catch multi-copy stars even when the full-frame orientation signal is weak
 - Applies cloud and tracking penalties, with repeat-drift and cloudy frames scored much lower than ordinary marginal frames
 - Ranks images and labels each one: `Keep`, `Review`, or `Discard`
@@ -106,14 +106,15 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - In v0.3.3, red star overlay circles were made stricter: red means a guide-sample star supporting a `Possible` or `Severe` tracking warning, not every mildly elongated detected star.
 - In v0.3.4, the overlay was changed to show only the guide-star sample used for tracking analysis. Tiny/faint detections are excluded from the overlay and from guiding/tracking decisions.
 - After v0.3.6, the visual overlay includes reliable full-field guide/reference stars again so corners can be inspected manually, while tracking severity remains based on the central guide-star sample. Poorly shaped corner reference stars are orange, not red, because they can be optical/corner behaviour rather than guiding drift.
-- In v0.3.5, cloud detection was retrained from labelled cloudy and clear batches. Background range plus structure became the warning gate; star-loss and mean-lift were supporting evidence.
+- In v0.3.5, the cloud detector used background range and structure as its warning gate, with star-loss and background-lift as supporting evidence. It is a deterministic heuristic and does not require an online model or image-training dataset.
 - In v0.3.6, uncompressed monolithic XISF support was added. XISF files use the same scoring pipeline as FITS after their XML header and attached linear pixels are decoded.
-- In v0.3.7, cloud detection was tightened after a labelled clear batch with strong astrophysical/background structure produced false cloud warnings. Smooth structure alone is now capped as unconfirmed; normal cloud warnings need relative star loss, star loss plus mean lift, or an extreme structure case.
+- In v0.3.7, the cloud detector received a conservative false-positive guard. Smooth structure alone is capped as unconfirmed; normal cloud warnings need relative star loss, star loss plus background lift, or an extreme structure case.
 - In v0.3.8, the preview inspection view was sharpened: detail renders can be larger, normal zoom is capped to avoid fake enlargement, and the magnifier adds 12x and 16x levels.
 - In v0.3.9, the inspection detail render uses a gentler stretch than the grid preview, reducing the over-stretched look when the magnifier is active.
 - In v0.3.10, the full zoom preview was restored to the normal grid stretch. Only the magnifier lens uses the gentler stretch, and it waits for its high-resolution source instead of magnifying the temporary low-resolution thumbnail.
 - In v0.3.11, the zoom slider was removed. The opened preview now stays fit-to-window, and that toolbar space is used for a **Lens Stretch** slider that rebuilds only the magnifier source.
 - In v0.3.12, the opened full preview no longer swaps to a delayed high-resolution render. It stays visually identical to the grid-stretch preview, improving open speed and avoiding a delayed stretch/brightness change. High-resolution rendering is reserved for the magnifier lens, and borderline overlay stars are amber instead of green.
+- In v0.3.13, cloud background structure and same-object/filter background-lift evidence use the sampled pixel median instead of the arithmetic mean. The general `Mean` metric remains available for other image measurements.
 - Sharpness scoring blends FWHM and HFR so tight-star measurements are less fragile.
 - Star metrics use all detected stars in each image; very dense fields can take longer to analyse.
 - Star count is scored relative to the current object-shot/filter group to help catch clouds, haze, fog, or dawn reducing visible stars without comparing different targets.
@@ -129,7 +130,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - Mixed frame-type folders are grouped by type, so `Flat`, `Dark`, `Bias`, and `Dark Flat` frames are not scored as weak light frames.
 - For light frames, sharpness, noise, and star count are relative to the current object-shot/filter group; roundness and clipping use absolute scoring.
 - Light-frame clipping uses both `clipping_percent` and `near_saturation_percent`; the CSV also exports `clipping_pressure` and `clipping_score`. Calibration frames treat saturated bright pixels as calibration evidence, not as light-frame highlight clipping.
-- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when abnormal background range and structure are confirmed by same-object/filter star loss, by star loss plus mean-brightness lift, or by an extreme structure case. Smooth background gradients or real target nebulosity can raise the cloud structure value, but they no longer trigger a warning or score penalty by themselves.
+- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when abnormal median-background range and structure are confirmed by same-object/filter star loss, by star loss plus median-background lift, or by an extreme structure case. Smooth background gradients or real target nebulosity can raise the cloud structure value, but they no longer trigger a warning or score penalty by themselves.
 - Halo detection compares broad annuli around bright stars with the local background. It creates `Possible Halo` or `Likely Halo` warnings and amber preview rings; the same rings appear in the zoom view when the star overlay is enabled. By default it does not change the quality score; enable **Penalise Halo** to apply score penalties.
 - Calibration report cards appear when calibration frames are present. They summarize each Flat/Dark/Bias/Dark Flat set, including frame count, set median, median range, Flat artefact mismatches, median outliers, exposure/temperature match checks, hot-pixel outliers, and gradient/light-leak warnings.
 - Default scoring weights are Sharpness `40%`, Noise `15%`, Roundness `20%`, Star Count `15%`, and Clipping `10%`.

@@ -96,7 +96,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.3.12";
+const appVersion = "0.3.13";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -363,9 +363,9 @@ const cloudLikelyBackgroundRangePercent = 6.5;
 const cloudLikelyStructureScore = 0.16;
 const cloudSupportStarLossScore = 0.24;
 const cloudStrongStarLossScore = 0.36;
-const cloudMeanLiftMinimumStarLossScore = 0.18;
-const cloudSupportMeanLiftScore = 0.55;
-const cloudStrongMeanLiftScore = 0.55;
+const cloudMedianLiftMinimumStarLossScore = 0.18;
+const cloudSupportMedianLiftScore = 0.55;
+const cloudStrongMedianLiftScore = 0.55;
 const cloudExtremeBackgroundRangePercent = 10.5;
 const cloudExtremeStructureScore = 0.43;
 const cloudExtremeSingleFrameBackgroundRangePercent = 14.5;
@@ -4023,7 +4023,7 @@ function computeLevelHistogram(values, saturationLevel, binCount = 72, maxSample
   };
 }
 
-function computeCloudStructureMetrics(gray, width, height, mean, std, options = {}) {
+function computeCloudStructureMetrics(gray, width, height, backgroundMedian, std, options = {}) {
   const cols = 16;
   const rows = 12;
   const tileSampleTarget =
@@ -4085,7 +4085,7 @@ function computeCloudStructureMetrics(gray, width, height, mean, std, options = 
   const median = percentileFromSorted(sortedTiles, 0.5);
   const p90 = percentileFromSorted(sortedTiles, 0.9);
   const range = Math.max(p90 - p10, 0);
-  const denominator = Math.max(Math.abs(median), Math.abs(mean), std * 3, 1e-6);
+  const denominator = Math.max(Number.isFinite(backgroundMedian) ? Math.abs(backgroundMedian) : 0, std * 3, 1e-6);
   const rangePercent = (range / denominator) * 100;
 
   const summarizeBuckets = (buckets) =>
@@ -5068,7 +5068,7 @@ function resetCloudAssessment(result) {
   result.cloudSeverity = "None";
   result.cloudScore = 0;
   result.cloudStarLossScore = 0;
-  result.cloudMeanLiftScore = 0;
+  result.cloudMedianLiftScore = 0;
   result.cloudSummary = "No cloud warning";
 }
 
@@ -5077,19 +5077,20 @@ function updateCloudAssessmentForGroup(results) {
     .map((result) => result.starCount)
     .filter((value) => Number.isFinite(value))
     .sort((a, b) => a - b);
-  const means = results
-    .map((result) => result.mean)
+  const backgroundLevels = results
+    .map((result) => result.median)
     .filter((value) => Number.isFinite(value))
     .sort((a, b) => a - b);
 
   const starReference = starCounts.length > 0 ? Math.max(percentileFromSorted(starCounts, 0.75), 1) : 1;
-  const meanMedian = means.length > 0 ? percentileFromSorted(means, 0.5) : NaN;
-  const meanP10 = means.length > 0 ? percentileFromSorted(means, 0.1) : NaN;
-  const meanP90 = means.length > 0 ? percentileFromSorted(means, 0.9) : NaN;
-  const meanRange = Number.isFinite(meanP10) && Number.isFinite(meanP90) ? Math.max(meanP90 - meanP10, 0) : 0;
-  const meanDenominator = Math.max(Math.abs(meanMedian) * 0.04, meanRange * 0.6, 1e-6);
+  const backgroundMedian = backgroundLevels.length > 0 ? percentileFromSorted(backgroundLevels, 0.5) : NaN;
+  const backgroundP10 = backgroundLevels.length > 0 ? percentileFromSorted(backgroundLevels, 0.1) : NaN;
+  const backgroundP90 = backgroundLevels.length > 0 ? percentileFromSorted(backgroundLevels, 0.9) : NaN;
+  const backgroundRange =
+    Number.isFinite(backgroundP10) && Number.isFinite(backgroundP90) ? Math.max(backgroundP90 - backgroundP10, 0) : 0;
+  const backgroundDenominator = Math.max(Math.abs(backgroundMedian) * 0.04, backgroundRange * 0.6, 1e-6);
   const hasRelativeStarReference = starCounts.length >= cloudRelativePeerMinimum;
-  const hasRelativeMeanReference = means.length >= cloudRelativePeerMinimum;
+  const hasRelativeBackgroundReference = backgroundLevels.length >= cloudRelativePeerMinimum;
 
   for (const result of results) {
     resetCloudAssessment(result);
@@ -5099,29 +5100,29 @@ function updateCloudAssessmentForGroup(results) {
       hasRelativeStarReference && starReference > 0
         ? clamp((starReference - (Number(result.starCount) || 0)) / (starReference * 0.55), 0, 1)
         : 0;
-    const meanLiftScore =
-      hasRelativeMeanReference && Number.isFinite(result.mean) && Number.isFinite(meanMedian)
-        ? clamp((result.mean - meanMedian) / meanDenominator, 0, 1)
+    const medianLiftScore =
+      hasRelativeBackgroundReference && Number.isFinite(result.median) && Number.isFinite(backgroundMedian)
+        ? clamp((result.median - backgroundMedian) / backgroundDenominator, 0, 1)
         : 0;
-    const pairedEvidence = Math.min(structureScore, Math.max(starLossScore, meanLiftScore));
+    const pairedEvidence = Math.min(structureScore, Math.max(starLossScore, medianLiftScore));
     const rangeStructurePossible =
       rangePercent >= cloudPossibleBackgroundRangePercent && structureScore >= cloudPossibleStructureScore;
     const rangeStructureLikely =
       rangePercent >= cloudLikelyBackgroundRangePercent && structureScore >= cloudLikelyStructureScore;
-    const meanLiftWithStarLossEvidence =
-      starLossScore >= cloudMeanLiftMinimumStarLossScore && meanLiftScore >= cloudSupportMeanLiftScore;
-    const supportEvidence = starLossScore >= cloudSupportStarLossScore || meanLiftWithStarLossEvidence;
+    const medianLiftWithStarLossEvidence =
+      starLossScore >= cloudMedianLiftMinimumStarLossScore && medianLiftScore >= cloudSupportMedianLiftScore;
+    const supportEvidence = starLossScore >= cloudSupportStarLossScore || medianLiftWithStarLossEvidence;
     const strongSupportEvidence =
       starLossScore >= cloudStrongStarLossScore ||
-      (starLossScore >= cloudSupportStarLossScore && meanLiftScore >= cloudStrongMeanLiftScore);
+      (starLossScore >= cloudSupportStarLossScore && medianLiftScore >= cloudStrongMedianLiftScore);
     const extremeStructureEvidence =
       (rangePercent >= cloudExtremeBackgroundRangePercent &&
         structureScore >= cloudExtremeStructureScore &&
-        meanLiftScore >= cloudStrongMeanLiftScore) ||
+        medianLiftScore >= cloudStrongMedianLiftScore) ||
       (rangePercent >= cloudExtremeSingleFrameBackgroundRangePercent &&
         structureScore >= cloudExtremeSingleFrameStructureScore);
     let cloudScore = clamp(
-      structureScore * 0.54 + starLossScore * 0.18 + meanLiftScore * 0.14 + pairedEvidence * 0.24,
+      structureScore * 0.54 + starLossScore * 0.18 + medianLiftScore * 0.14 + pairedEvidence * 0.24,
       0,
       1
     );
@@ -5157,11 +5158,11 @@ function updateCloudAssessmentForGroup(results) {
     result.cloudSeverity = cloudSeverity;
     result.cloudScore = cloudScore;
     result.cloudStarLossScore = starLossScore;
-    result.cloudMeanLiftScore = meanLiftScore;
+    result.cloudMedianLiftScore = medianLiftScore;
     const relativeSummary =
-      hasRelativeStarReference && hasRelativeMeanReference
-        ? `${formatMetric(starLossScore * 100, 0)}% star loss, ${formatMetric(meanLiftScore * 100, 0)}% mean-lift signal`
-        : `single-frame structure check (${starCounts.length}/${cloudRelativePeerMinimum} same-shot/filter frames)`;
+      hasRelativeStarReference && hasRelativeBackgroundReference
+        ? `${formatMetric(starLossScore * 100, 0)}% star loss, ${formatMetric(medianLiftScore * 100, 0)}% median-lift signal`
+        : `single-frame structure check (${backgroundLevels.length}/${cloudRelativePeerMinimum} same-shot/filter frames)`;
     const unconfirmedStructureSummary =
       rangeStructurePossible && !supportEvidence
         ? "No cloud warning; background structure lacks enough same-shot star-loss confirmation"
@@ -7641,7 +7642,7 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     saturationThreshold,
     analysisConfig.distributionMaxSamples
   );
-  const backgroundStructureMetrics = computeCloudStructureMetrics(gray, width, height, mean, std, {
+  const backgroundStructureMetrics = computeCloudStructureMetrics(gray, width, height, distribution.median, std, {
     tileSampleTarget: analysisConfig.cloudTileSamples
   });
   const calibrationOutlierMetrics = isCalibration
@@ -7794,7 +7795,7 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     cloudScore: 0,
     cloudStructureScore: cloudMetrics.cloudStructureScore,
     cloudStarLossScore: 0,
-    cloudMeanLiftScore: 0,
+    cloudMedianLiftScore: 0,
     cloudBackgroundRangePercent: cloudMetrics.cloudBackgroundRangePercent,
     cloudBackgroundRange: cloudMetrics.cloudBackgroundRange,
     cloudStripRangePercent: cloudMetrics.cloudStripRangePercent,
@@ -8342,9 +8343,9 @@ const cloudLikelyBackgroundRangePercent = ${cloudLikelyBackgroundRangePercent};
 const cloudLikelyStructureScore = ${cloudLikelyStructureScore};
 const cloudSupportStarLossScore = ${cloudSupportStarLossScore};
 const cloudStrongStarLossScore = ${cloudStrongStarLossScore};
-const cloudMeanLiftMinimumStarLossScore = ${cloudMeanLiftMinimumStarLossScore};
-const cloudSupportMeanLiftScore = ${cloudSupportMeanLiftScore};
-const cloudStrongMeanLiftScore = ${cloudStrongMeanLiftScore};
+const cloudMedianLiftMinimumStarLossScore = ${cloudMedianLiftMinimumStarLossScore};
+const cloudSupportMedianLiftScore = ${cloudSupportMedianLiftScore};
+const cloudStrongMedianLiftScore = ${cloudStrongMedianLiftScore};
 const cloudExtremeBackgroundRangePercent = ${cloudExtremeBackgroundRangePercent};
 const cloudExtremeStructureScore = ${cloudExtremeStructureScore};
 const cloudExtremeSingleFrameBackgroundRangePercent = ${cloudExtremeSingleFrameBackgroundRangePercent};
@@ -9073,7 +9074,7 @@ function exportCsv() {
     "cloud_score",
     "cloud_structure_score",
     "cloud_star_loss_score",
-    "cloud_mean_lift_score",
+    "cloud_median_lift_score",
     "cloud_background_range_percent",
     "cloud_summary",
     "halo_warning",
@@ -9192,7 +9193,7 @@ function exportCsv() {
       formatMetric(result.cloudScore, 4),
       formatMetric(result.cloudStructureScore, 4),
       formatMetric(result.cloudStarLossScore, 4),
-      formatMetric(result.cloudMeanLiftScore, 4),
+      formatMetric(result.cloudMedianLiftScore, 4),
       formatMetric(result.cloudBackgroundRangePercent, 3),
       result.cloudSummary || "",
       lightOnlyText(haloLabel(result)),

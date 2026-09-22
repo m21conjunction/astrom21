@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-09-16
+Updated: 2026-09-22
 
-Current app version: **0.3.12**.
+Current app version: **0.3.13**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -716,7 +716,7 @@ CSV fields:
 - `cloud_score`
 - `cloud_structure_score`
 - `cloud_star_loss_score`
-- `cloud_mean_lift_score`
+- `cloud_median_lift_score`
 - `cloud_background_range_percent`
 - `cloud_summary`
 
@@ -725,13 +725,13 @@ Cloud detection runs for light-frame analysis, not calibration-frame checks. It 
 The app measures two kinds of evidence:
 
 1. Large-scale background structure inside the frame.
-2. Same-object and same-filter differences from the rest of the batch, especially lost stars and lifted mean brightness.
+2. Same-object and same-filter differences from the rest of the batch, especially lost stars and lifted median background.
 
-In v0.3.5, cloud warnings were trained from labelled cloudy and clear batches. Background range plus structure became the warning gate. Star-loss and mean-lift signals strengthened the warning only after that gate was open, because labelled clean frames can still have relative mean lift or star-count differences.
+The detector is a deterministic heuristic; it does not train on the user's pictures and does not require an online model. Background range plus structure forms the warning gate. Star-loss and median-background-lift signals strengthen the warning only after that gate is open.
 
 In v0.3.6, XISF files use the same cloud calculation after their linear pixels are decoded.
 
-In v0.3.7, the cloud gate was tightened after a labelled clear batch showed strong background/target structure but no actual cloud. Background range and structure are still measured, but they no longer create a normal cloud warning by themselves. A warning now needs same-object/filter star loss, star loss plus mean lift, or an extreme structure case. This reduces false positives on real nebulosity, smooth sky gradients, and optical background structure.
+In v0.3.7, the cloud gate was tightened to be conservative when a frame has strong background/target structure without independent cloud evidence. Background range and structure are still measured, but they no longer create a normal cloud warning by themselves. A warning now needs same-object/filter star loss, star loss plus median-background lift, or an extreme structure case. This reduces false positives on real nebulosity, smooth sky gradients, and optical background structure.
 
 In v0.3.8, the preview inspection workflow was adjusted for better visual detail. The opened detail render can use a larger safe preview, regular zoom is capped at the native detail image scale so it does not create blurry fake enlargement, and the magnifier lens includes stronger `12x` and `16x` levels for manual artifact inspection.
 
@@ -743,6 +743,8 @@ In v0.3.11, the normal zoom slider was removed. The zoom dialog now keeps the fu
 
 In v0.3.12, the full zoom preview stopped replacing the grid thumbnail with a delayed high-resolution full-frame render. The opened preview now remains visually stable and identical to the grid-stretch preview, while high-resolution rendering is reserved for the magnifier lens. This avoids a delayed stretch/brightness change and makes opening the preview lighter.
 
+In v0.3.13, the cloud detector was changed to use median background values. This applies both to the denominator for the large-scale tile structure and to the relative background-lift signal between same-object/filter frames. The displayed arithmetic `Mean` remains a separate general image statistic and is not used for the cloud background-lift decision.
+
 ### Large-Scale Background Structure
 
 The app divides the image into a `16 x 12` grid. For each tile it samples finite pixels and uses the tile median as a coarse local background estimate. Stars only occupy a small fraction of a tile, so the median is much less sensitive to star cores than the mean.
@@ -751,7 +753,7 @@ The tile medians are sorted:
 
 ```text
 background_range = p90(tile_medians) - p10(tile_medians)
-denominator = max(abs(tile_median), abs(image_mean), 3 * image_std, 1e-6)
+denominator = max(abs(image_background_median), 3 * image_std, 1e-6)
 cloud_background_range_percent = background_range / denominator * 100
 ```
 
@@ -785,7 +787,7 @@ cloud_structure_score =
 
 ### Same Object/Filter Batch Evidence
 
-Clouds often reduce detected star count and can lift the background. To avoid comparing unlike filters or unlike targets, this part is computed inside the current object-shot/filter group.
+Clouds often reduce detected star count and can lift the background. To avoid comparing unlike filters or unlike targets, this part is computed inside the current object-shot/filter group. The background level is the per-frame pixel median, which is less affected by bright stars and extended target structure than the arithmetic mean.
 
 ```text
 cloud_relative_peer_minimum = 3
@@ -797,15 +799,15 @@ cloud_star_loss_score =
         0
 ```
 
-For background lift:
+For median background lift:
 
 ```text
-mean_median = median(mean brightness in same-object/filter group)
-mean_range = p90(mean brightness) - p10(mean brightness)
-mean_denominator = max(abs(mean_median) * 0.04, mean_range * 0.6, 1e-6)
-cloud_mean_lift_score =
+background_median = median(pixel median in same-object/filter group)
+background_range = p90(pixel median) - p10(pixel median)
+background_denominator = max(abs(background_median) * 0.04, background_range * 0.6, 1e-6)
+cloud_median_lift_score =
     if same-object/filter light-frame count >= cloud_relative_peer_minimum:
-        clamp((mean - mean_median) / mean_denominator, 0, 1)
+        clamp((pixel_median - background_median) / background_denominator, 0, 1)
     else:
         0
 ```
@@ -815,18 +817,18 @@ With only one or two light frames in an object-shot/filter group, the app cannot
 The final cloud score blends frame-internal structure with batch-relative evidence:
 
 ```text
-paired_evidence = min(cloud_structure_score, max(cloud_star_loss_score, cloud_mean_lift_score))
+paired_evidence = min(cloud_structure_score, max(cloud_star_loss_score, cloud_median_lift_score))
 
 cloud_score =
     0.54 * cloud_structure_score +
     0.18 * cloud_star_loss_score +
-    0.14 * cloud_mean_lift_score +
+    0.14 * cloud_median_lift_score +
     0.24 * paired_evidence
 ```
 
 The result is clamped to `0..1`.
 
-The labelled batches showed that star count alone is fragile, but a later clear batch also showed that background range/structure alone is too aggressive for targets with real nebulosity or smooth gradients. The current threshold gate is:
+Star count alone is fragile, and background range/structure alone can be too aggressive for targets with real nebulosity or smooth gradients. The current conservative threshold gate is:
 
 ```text
 range_structure_possible =
@@ -841,21 +843,21 @@ support_evidence =
     cloud_star_loss_score >= 0.24
     or (
         cloud_star_loss_score >= 0.18
-        and cloud_mean_lift_score >= 0.55
+        and cloud_median_lift_score >= 0.55
     )
 
 strong_support_evidence =
     cloud_star_loss_score >= 0.36
     or (
         cloud_star_loss_score >= 0.24
-        and cloud_mean_lift_score >= 0.55
+        and cloud_median_lift_score >= 0.55
     )
 
 extreme_structure_evidence =
     (
         cloud_background_range_percent >= 10.5
         and cloud_structure_score >= 0.43
-        and cloud_mean_lift_score >= 0.55
+        and cloud_median_lift_score >= 0.55
     )
     or (
         cloud_background_range_percent >= 14.5
@@ -918,7 +920,7 @@ Possible Cloud:
     final quality is capped at 55
 ```
 
-Important caveat: very strong nebulosity, severe gradients, or aggressive moon/light-pollution gradients can still look cloud-like in the structure metrics. The same-object/filter star-count and mean comparisons reduce that bias because stable target structure should usually be present in every sub of the same target and filter, while passing clouds change from frame to frame. Mean lift alone is no longer enough, because a clear batch can brighten over time without clouds.
+Important caveat: very strong nebulosity, severe gradients, or aggressive moon/light-pollution gradients can still look cloud-like in the structure metrics. The same-object/filter star-count and median-background comparisons reduce that bias because stable target structure should usually be present in every sub of the same target and filter, while passing clouds change from frame to frame. Median lift alone is no longer enough, because a clear batch can brighten over time without clouds.
 
 ## Halo Warning
 
@@ -2453,7 +2455,7 @@ cloud_warning
 cloud_score
 cloud_structure_score
 cloud_star_loss_score
-cloud_mean_lift_score
+cloud_median_lift_score
 cloud_background_range_percent
 cloud_summary
 halo_warning
@@ -2480,7 +2482,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.3.12`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.3.13`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
@@ -2562,7 +2564,7 @@ Short meanings:
 - `cloud_score`: 0 to 1 combined cloud/transparency warning score.
 - `cloud_structure_score`: 0 to 1 large-scale background structure score.
 - `cloud_star_loss_score`: 0 to 1 same-object/filter star-count loss signal.
-- `cloud_mean_lift_score`: 0 to 1 same-object/filter background brightness lift signal.
+- `cloud_median_lift_score`: 0 to 1 same-object/filter median-background lift signal.
 - `cloud_background_range_percent`: p90 minus p10 tile-background range as a percent of the image/background scale.
 - `cloud_summary`: short cloud warning text shown in the UI.
 - `halo_warning`: OK, Possible Halo, or Likely Halo.
