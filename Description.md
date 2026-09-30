@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-09-22
+Updated: 2026-09-29
 
-Current app version: **0.3.13**.
+Current app version: **0.4.8**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -107,6 +107,8 @@ FITS and XISF frames can be large, so the app keeps separate visual and measurem
 - Full zoom view: fit-to-window display using the stable grid-stretch preview thumbnail.
 - Magnifier detail image: longest side up to `9000` pixels, with a `48 MP` pixel-budget cap.
 - Magnifier lens: selectable `2x`, `4x`, `8x`, `12x`, and `16x`.
+
+From v0.4.6, the expanded preview reserves more height for the image by replacing its former multi-row metadata grid with one compact, horizontally scrollable strip. Light previews retain the score/recommendation, filter, object, sharpness, noise, HFR, roundness, eccentricity, star count, tracking, cloud status, and clipping. Calibration previews use a compact equivalent focused on calibration quality. Measurements omitted from this strip remain available on the result card, in **Why this score?**, and in CSV export.
 
 Preview and zoom images are downsampled only for display. FITS measurements in v0.3.0 and XISF measurements in v0.3.6 use the full-resolution pixel grid in both Standard and Expert modes.
 
@@ -717,6 +719,11 @@ CSV fields:
 - `cloud_structure_score`
 - `cloud_star_loss_score`
 - `cloud_median_lift_score`
+- `cloud_tile_residual_score`
+- `cloud_background_change_score`
+- `cloud_star_anomaly_score`
+- `cloud_noise_change_score`
+- `cloud_temporal_anomaly_score`
 - `cloud_background_range_percent`
 - `cloud_summary`
 
@@ -727,7 +734,7 @@ The app measures two kinds of evidence:
 1. Large-scale background structure inside the frame.
 2. Same-object and same-filter differences from the rest of the batch, especially lost stars and lifted median background.
 
-The detector is a deterministic heuristic; it does not train on the user's pictures and does not require an online model. Background range plus structure forms the warning gate. Star-loss and median-background-lift signals strengthen the warning only after that gate is open.
+The detector is a deterministic heuristic; it does not train on the user's pictures and does not require an online model. Raw background range and structure are diagnostic only. The warning decision is based on changes from nearby frames in the same object-shot/filter group, so a stable optical gradient, nebula, vignetting pattern, or coma pattern is less likely to be mistaken for a cloud.
 
 In v0.3.6, XISF files use the same cloud calculation after their linear pixels are decoded.
 
@@ -744,6 +751,8 @@ In v0.3.11, the normal zoom slider was removed. The zoom dialog now keeps the fu
 In v0.3.12, the full zoom preview stopped replacing the grid thumbnail with a delayed high-resolution full-frame render. The opened preview now remains visually stable and identical to the grid-stretch preview, while high-resolution rendering is reserved for the magnifier lens. This avoids a delayed stretch/brightness change and makes opening the preview lighter.
 
 In v0.3.13, the cloud detector was changed to use median background values. This applies both to the denominator for the large-scale tile structure and to the relative background-lift signal between same-object/filter frames. The displayed arithmetic `Mean` remains a separate general image statistic and is not used for the cloud background-lift decision.
+
+In v0.4.7, an interim detector multiplied raw structure by positive median-lift. That was too blunt because a zero lift means only that a frame is at or below the group median; it does not prove that no cloud is present. In v0.4.8, median-lift remains an exported supporting measurement, but it is no longer a multiplier or a veto.
 
 ### Large-Scale Background Structure
 
@@ -812,101 +821,57 @@ cloud_median_lift_score =
         0
 ```
 
-With only one or two light frames in an object-shot/filter group, the app cannot know whether a lower star count is real cloud loss or simply the normal value for that target/filter. In that case, relative cloud evidence is disabled and ordinary range/structure alone is treated conservatively. Only an extreme structure case can raise a cloud warning without normal peer confirmation.
+With fewer than three frames in an object-shot/filter group, there is no reliable batch-relative comparison, so transient cloud evidence is disabled. With enough frames, the app selects up to six chronological neighbours around each exposure. For each frame it builds a local reference from those neighbours.
 
-The final cloud score blends frame-internal structure with batch-relative evidence:
-
-```text
-paired_evidence = min(cloud_structure_score, max(cloud_star_loss_score, cloud_median_lift_score))
-
-cloud_score =
-    0.54 * cloud_structure_score +
-    0.18 * cloud_star_loss_score +
-    0.14 * cloud_median_lift_score +
-    0.24 * paired_evidence
-```
-
-The result is clamped to `0..1`.
-
-Star count alone is fragile, and background range/structure alone can be too aggressive for targets with real nebulosity or smooth gradients. The current conservative threshold gate is:
+The transient tile residual compares the current frame's `16 x 12` tile-median signature with the local reference. This is the key protection against the clean `_0113` example: a fixed field gradient can produce a large raw `cloud_structure_score`, but it is present in nearby frames and should produce only a small residual.
 
 ```text
-range_structure_possible =
-    cloud_background_range_percent >= 4.3
-    and cloud_structure_score >= 0.03
-
-range_structure_likely =
-    cloud_background_range_percent >= 6.5
-    and cloud_structure_score >= 0.16
-
-support_evidence =
-    cloud_star_loss_score >= 0.24
-    or (
-        cloud_star_loss_score >= 0.18
-        and cloud_median_lift_score >= 0.55
-    )
-
-strong_support_evidence =
-    cloud_star_loss_score >= 0.36
-    or (
-        cloud_star_loss_score >= 0.24
-        and cloud_median_lift_score >= 0.55
-    )
-
-extreme_structure_evidence =
-    (
-        cloud_background_range_percent >= 10.5
-        and cloud_structure_score >= 0.43
-        and cloud_median_lift_score >= 0.55
-    )
-    or (
-        cloud_background_range_percent >= 14.5
-        and cloud_structure_score >= 0.55
-    )
+tile_distance = p75(abs(current_tile_signature - local_tile_reference))
+cloud_tile_residual_score = clamp((tile_distance - 2.5) / 10, 0, 1)
 ```
 
-These gates raise the displayed cloud score floor:
+The detector also measures frame-to-frame changes in the median background, detected-star count, and local noise. The background change uses both the nearby-frame baseline and a group baseline; the star anomaly is deliberately two-sided because clouds can create false peaks as well as hide stars.
 
 ```text
-if extreme_structure_evidence or (range_structure_likely and support_evidence):
-    cloud_score = max(cloud_score, 0.72)
-    if support_evidence:
-        cloud_score = max(cloud_score, 0.78)
-else if range_structure_possible and support_evidence:
-    cloud_score = max(cloud_score, 0.44)
-    if support_evidence:
-        cloud_score = max(cloud_score, 0.52)
-    if strong_support_evidence:
-        cloud_score = max(cloud_score, 0.62)
-else if range_structure_possible:
-    cloud_score = min(cloud_score, 0.34)
+background_change_score = robust local/group median-background deviation
+star_scale = max(1.4826 * MAD(star_count), group_star_median * 0.015, 1)
+cloud_star_anomaly_score = clamp((abs(star_count - group_star_median) - star_scale) / (2 * star_scale), 0, 1)
+cloud_noise_change_score = robust local noise deviation
 ```
 
-That final cap is important: a frame can have a measurable smooth background gradient and still show `No cloud warning` if the same-shot stars do not support a cloud interpretation.
-
-Warning levels:
+The combined transient anomaly is:
 
 ```text
-Likely Cloud if:
-    extreme_structure_evidence
-    or (
-        range_structure_likely
-        and support_evidence
-        and strong_support_evidence
-    )
-    or (
-        range_structure_possible
-        and strong_support_evidence
-        and (
-            cloud_background_range_percent >= 4.8
-            or cloud_structure_score >= 0.06
-        )
-    )
+cloud_temporal_anomaly_score =
+    0.45 * cloud_tile_residual_score +
+    0.25 * cloud_background_change_score +
+    0.20 * cloud_star_anomaly_score +
+    0.10 * cloud_noise_change_score
 
-Possible Cloud if:
-    range_structure_possible
-    and support_evidence
+cloud_score = clamp(
+    0.80 * cloud_temporal_anomaly_score +
+    0.12 * cloud_median_lift_score +
+    0.08 * cloud_star_loss_score,
+    0,
+    1
+)
 ```
+
+Median-lift and star-loss remain useful supporting signals, but neither is used as a multiplier or a veto. A warning requires at least two signals above their support thresholds, or one strong independent signal. The practical gates are:
+
+```text
+possible_cloud =
+    at least 2 temporal neighbours
+    and cloud_temporal_anomaly_score >= 0.22
+    and (at least 2 support signals or one support signal >= 0.55)
+
+likely_cloud =
+    at least 2 temporal neighbours
+    and cloud_temporal_anomaly_score >= 0.42
+    and (at least 2 support signals or one support signal >= 0.70)
+```
+
+This means a clean frame can have a high raw background range and structure score without a cloud warning when that structure is stable. Conversely, a cloud can still be detected when its median-lift is zero, provided the spatial pattern or other frame-to-frame measurements change.
 
 Cloud penalties applied to light-frame quality:
 
@@ -2482,7 +2447,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.3.13`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.4.8`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
@@ -2565,6 +2530,11 @@ Short meanings:
 - `cloud_structure_score`: 0 to 1 large-scale background structure score.
 - `cloud_star_loss_score`: 0 to 1 same-object/filter star-count loss signal.
 - `cloud_median_lift_score`: 0 to 1 same-object/filter median-background lift signal.
+- `cloud_tile_residual_score`: 0 to 1 local tile-pattern change relative to nearby same-object/filter frames.
+- `cloud_background_change_score`: 0 to 1 robust frame-to-frame median-background change.
+- `cloud_star_anomaly_score`: 0 to 1 two-sided star-count anomaly relative to the same group.
+- `cloud_noise_change_score`: 0 to 1 robust local noise change.
+- `cloud_temporal_anomaly_score`: combined transient cloud-evidence score from tile, background, star, and noise changes.
 - `cloud_background_range_percent`: p90 minus p10 tile-background range as a percent of the image/background scale.
 - `cloud_summary`: short cloud warning text shown in the UI.
 - `halo_warning`: OK, Possible Halo, or Likely Halo.
@@ -2630,3 +2600,182 @@ That pattern should not automatically be interpreted as tracking drift or tilt.
 ### Calibration Frames Should Be Judged Differently
 
 Calibration frames are not expected to have good stars. A Flat, Dark, Bias, or Dark Flat is judged by signal level, saturation or bright-pixel behaviour, spread/uniformity, structure, and consistency with the calibration set. Star overlays and star-count display are kept to light frames.
+
+## Offline Moon And Sky Context (v0.4.2)
+
+Moon geometry is context. It does not enter the quality score merely because the Moon was bright or near the target. Image-derived cloud evidence still uses the existing cloud rules and penalties. From v0.4.4, the numeric **Maximum Moon Penalty** setting can use Moon context only when it agrees with a smooth, image-derived median-background lift.
+
+### What The Percentage Means
+
+`Moon illuminated` is the percentage of the visible lunar disc lit by the Sun:
+
+```text
+illumination fraction = (1 - cos(elongation)) / 2
+illumination percent = illumination fraction * 100
+```
+
+`0%` is approximately New Moon, `50%` is a quarter phase, and `100%` is approximately Full Moon. This percentage is separate from:
+
+- **Moon altitude**: angular height above the local horizon; negative means below the horizon.
+- **Moon separation**: great-circle angular distance between the Moon and target coordinates.
+- **Potential Moon Exposure**: a contextual `0` to `100` estimate of whether Moon light could affect that target/filter at that time and site. It is not a quality score or a penalty threshold.
+
+### Exposure Time Used
+
+The calculation uses the midpoint of each Light exposure in UTC. Metadata is resolved in this order:
+
+1. Mid-exposure fields: `DATE-AVG`, `DATE-MID`, `MIDTIME`, then their `MJD` or `JD` equivalents.
+2. Start fields: `DATE-OBS`, `DATE-BEG`, `DATE`, then `MJD-OBS`/`MJD-BEG` or `JD-OBS`/`JD`; half the exposure duration is added.
+3. End fields: `DATE-END`, `MJD-END`, or `JD-END`; half the exposure duration is subtracted.
+4. A `YYYY-MM-DD_HH-MM-SS`-style timestamp in the file path; half the exposure duration is added.
+
+A metadata timestamp without an explicit time-zone suffix is treated as UTC. If no usable time is available, the app displays that the Moon value is unavailable instead of guessing.
+
+### Internal Calculation
+
+The implementation is original bundled JavaScript in `moon-calculation.js`. It makes no network request and imports no astronomy vendor or third-party ephemeris runtime.
+
+The timestamp is converted to Julian Date and Julian centuries from J2000.0. The app calculates the lunar mean elongation `D`, solar mean anomaly `M`, and lunar mean anomaly `M'`, then applies the principal periodic corrections:
+
+```text
+corrected elongation = D
+  + 6.289 sin(M')
+  - 2.100 sin(M)
+  + 1.274 sin(2D - M')
+  + 0.658 sin(2D)
+  + 0.214 sin(2M')
+  + 0.110 sin(D)
+```
+
+The corrected elongation determines the illumination fraction, the eight displayed phase bands, and approximate lunar age:
+
+```text
+phase cycle = corrected elongation / 360
+lunar age days = phase cycle * 29.530588853
+```
+
+For position, the app evaluates low-precision lunar orbital elements from the Julian date, solves the eccentric anomaly, applies the principal lunar longitude/latitude/distance perturbations, and converts ecliptic coordinates to equatorial RA/DEC. Local sidereal time converts equatorial coordinates to altitude and azimuth. Target separation uses the spherical cosine formula:
+
+```text
+cos(separation) = sin(decMoon) sin(decTarget)
+                + cos(decMoon) cos(decTarget) cos(raMoon - raTarget)
+```
+
+This is observational context, not a navigation-grade ephemeris. Automated tests retain the v0.4.1 illumination references and also verify coordinate, horizon, and angular-separation bounds.
+
+### Observing Site Resolution
+
+Site coordinates are resolved independently for every frame. The app checks these FITS/XISF pairs in order:
+
+1. `SITELAT` / `SITELONG`
+2. `LAT-OBS` / `LONG-OBS`
+3. `OBSLAT` / `OBSLONG`
+4. `LATITUDE` / `LONGITUDE`
+5. `OBSGEO-B` / `OBSGEO-L`
+
+Elevation can use `SITEELEV`, `ALT-OBS`, `OBSALT`, `ELEVATIO`, `ELEVATION`, or `OBSGEO-H`. Coordinates accept signed decimal or sexagesimal values with N/S/E/W. Embedded metadata has priority. For missing coordinates, the user can save a named latitude/longitude/elevation and assign it to one selected folder; assignments are remembered locally. A city name is not geocoded because the app is offline and does not bundle a city database.
+
+From v0.4.5, **Manage observing sites** also lists unique locations detected directly in Light-frame FITS/XISF headers. Repeated coordinates are grouped within `0.002 deg`, approximately 200 metres, so a batch does not show one row per frame. The user can enter or update a local name for each detected coordinate. Saved names are stored locally and automatically applied to matching header coordinates in later batches.
+
+Naming a detected site changes only the display name and CSV `site_name`. The original latitude, longitude, elevation, and `site_source` continue to come from the image header and remain authoritative for Moon altitude, target altitude, and exposure calculations. This is deliberately different from a folder assignment, which supplies coordinates only when image metadata has no usable observing location.
+
+### Sessions And Mixed Batches
+
+Dated Light frames are ordered by UTC midpoint. A gap greater than eight hours starts a new observing session, avoiding an artificial split at midnight. Session cards are additionally separated by object-shot group, filter, and site. Keep/Review/Discard filtering does not redefine the context group, while frame-type, filter, and object-shot tabs control which context cards are displayed.
+
+### Potential Moon Exposure
+
+If time, site, or target coordinates are missing, exposure is unavailable. If the Moon is below `-0.5 deg`, exposure is `0`. Otherwise:
+
+```text
+illuminationFactor = illuminationFraction ^ 0.82
+altitudeFactor = clamp((moonAltitude + 0.5) / 60, 0, 1)
+separationFactor = 0.18 + 0.82 exp(-separation / 45)
+targetAltitudeFactor = 0.85 + 0.15 clamp((targetAltitude + 5) / 55, 0, 1)
+
+moonExposure = 100 * illuminationFactor
+                   * altitudeFactor
+                   * separationFactor
+                   * targetAltitudeFactor
+                   * filterSensitivity
+```
+
+Filter sensitivity is `1.00` for L/Clear/unknown/broadband, `0.82` for RGB, `0.35` for OIII, and `0.18` for Ha/SII. Labels are None (`<5`), Low (`<22`), Moderate (`<48`), High (`<72`), and Very high. The bands communicate context. A value below Moderate cannot trigger the optional penalty; higher values continuously scale the result instead of selecting a hidden fixed cap.
+
+### Observed Background Impact And Sky Label
+
+Observed impact remains image-derived:
+
+```text
+observedImpact = 0.50 * structureScore
+               + 0.32 * relativeStarLossScore
+               + 0.18 * medianLiftScore
+```
+
+The display combines this evidence with Moon exposure:
+
+- **Moonlight likely**: high Moon exposure with a smooth median lift, no cloud-level structure, and no strong star loss.
+- **Possible moonlit haze/cloud**: normal cloud evidence occurs while Moon exposure is plausible. Moon light does not cancel the cloud warning.
+- **Cloud likely**: normal cloud evidence occurs without strong Moon exposure.
+- **Non-Moon brightening**: a smooth median lift is not explained by the Moon; twilight or light pollution is possible.
+- **Clear evidence**: no material structure or star-loss evidence.
+- **Indeterminate**: mixed evidence or too few comparable frames.
+
+The existing `cloudSeverity`, cloud thresholds, score caps, and cloud penalties are unchanged.
+
+### User-Entered Moon Impact Penalty (v0.4.4)
+
+**Maximum Moon Penalty** is a numeric percentage from `0` to `100`, saved with the other local settings. Its default is `0%`, which disables the penalty. It applies only to Light frames. Potential exposure is not sufficient by itself: a bright Moon near the target can still produce no penalty when the image background does not show the expected smooth lift.
+
+The penalty gate requires all of the following:
+
+- the user-entered maximum is greater than `0%`;
+- Potential Moon Exposure is at least Moderate (`moonExposureScore >= 22`);
+- the same object-shot/filter comparison produces `medianLiftScore > 0.15`;
+- cloud structure remains below the Possible Cloud structure threshold (`structureScore < 0.03`);
+- relative star-loss evidence remains below the cloud-support threshold (`starLossScore < 0.24`);
+- the frame is not already classified as `Possible Cloud` or `Likely Cloud`.
+
+The confirmed impact combines the independent astronomical and image measurements:
+
+```text
+confirmedMoonImpact = clamp((moonExposureScore / 100) * medianLiftScore, 0, 1)
+```
+
+```text
+userMaximumFraction = userMaximumPercent / 100
+penaltyFraction = userMaximumFraction * confirmedMoonImpact
+scoreAfterMoon = scoreBeforeMoon * (1 - penaltyFraction)
+```
+
+For example, a user maximum of `10%`, Moon exposure of `60/100`, and median-lift evidence of `0.60` produce `confirmedMoonImpact = 0.36` and a `3.6%` multiplicative reduction. The entered percentage is therefore an absolute ceiling, not an automatic deduction.
+
+Fractions below `0.002` (less than `0.2%`) are treated as too small to affect the rounded score. The penalty is skipped whenever a cloud penalty applies, preventing the same background degradation from being counted as both cloud and Moon impact. The **Why this score?** breakdown identifies an applied Moon reduction and gives the exposure, median-lift evidence, and user maximum.
+
+### Display And Export
+
+Each session/object/filter/site card shows a representative phase pictogram, UTC range, frame count, site, illumination range, Moon altitude, target separation, Potential Moon Exposure, and sky interpretation. Each Light frame also displays UTC, Moon Lit, Moon Phase, Moon Age, Site, Moon Alt, Moon Sep, Moon Exposure, and Sky.
+
+CSV adds:
+
+- `observation_time_utc`
+- `observation_time_source`
+- `observation_session`
+- `source_folder`
+- `site_name`, `site_latitude_degrees`, `site_longitude_degrees`, `site_elevation_metres`, `site_source`
+- `moon_illumination_percent`
+- `moon_phase`
+- `moon_age_days`
+- `moon_ra_degrees`, `moon_dec_degrees`
+- `moon_altitude_degrees`, `moon_azimuth_degrees`
+- `moon_target_separation_degrees`, `target_altitude_degrees`
+- `moon_exposure_score`, `moon_exposure_level`
+- `moon_calculation_method`
+- `moon_score_effect`, either `none` or `optional penalty applied` for Light frames
+- `moon_penalty_enabled`, `moon_penalty_setting_percent`, `moon_penalty_applied`
+- `moon_penalty_cap_percent`, `moon_confirmed_impact`, `moon_penalty_fraction`
+- `moon_penalty_reason`
+- `sky_condition`, `sky_condition_confidence`, `sky_condition_summary`
+- `observed_background_impact_score`
+
+Calibration frames report the Moon fields as `skipped`.

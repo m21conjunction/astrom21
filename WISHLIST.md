@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-09-22
-Current app version: 0.3.13
+Updated: 2026-09-29
+Current app version: 0.4.8
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -75,11 +75,15 @@ Best options:
    Implemented in v0.3.6. The app can analyse uncompressed monolithic `.xisf` files with attached image data, including embedded `FITSKeyword` metadata and common native XISF property aliases. Compressed/distributed XISF decoding remains a future packaging/library topic.
 
 21. **Cloud False-Positive Guard**
-   Implemented as a deterministic heuristic. Cloud warnings require same-object/filter star-loss support, star loss plus median-background lift, or an extreme structure case. Smooth gradients and real nebulosity can still appear in the exported cloud structure metrics, but they no longer apply a cloud warning or score penalty by themselves.
+   Implemented as a deterministic heuristic. Cloud warnings use transient same-object/filter batch evidence. Smooth gradients and real nebulosity can still appear in the exported raw cloud structure metrics, but stable structure does not apply a cloud warning or score penalty by itself.
    Updated in v0.3.13 so cloud background structure and same-object/filter background-lift evidence use sampled pixel medians instead of arithmetic means. The general Mean metric remains available but is not used for the cloud background-lift decision.
+   Updated in v0.4.7 with a median-lift weighting experiment, then replaced in v0.4.8 after labelled frames showed that zero lift does not mean no cloud. The v0.4.8 detector compares local tile patterns, median background, star-count anomalies, and noise changes across nearby frames. The raw range/structure values remain diagnostic.
 
 22. **Higher-Resolution Frame Preview And Stronger Magnifier**
    Implemented in v0.3.8 and refined through v0.3.12. The detail view keeps the full preview fit-to-window with the normal grid stretch, the magnifier offers 12x and 16x levels in addition to 2x, 4x, and 8x, and the magnifier lens uses a separate high-resolution source with its own remembered Lens Stretch slider. The full preview itself stays stable and does not swap to a delayed high-resolution render.
+
+14. **Multi-Language UI**
+   Implemented in v0.4.0 with a remembered selector for International English, Spanish, Italian, French, and German. User-facing interface text is externalised from the analysis logic, and the approved terminology is maintained in `TRANSLATIONS.md`.
 
 ## Open Ideas
 
@@ -100,9 +104,6 @@ Best options:
    Detect likely sensor or optical tilt from corner-to-corner differences in star HFR/FWHM, eccentricity, and roundness, then show a preview overlay or corner map to help diagnose the field.
    Important caveat: this should be designed as a field-quality map first, not a simple "tilt detected" warning. Telescopes without a corrector, such as non-Edge Schmidt-Cassegrains or Newtonians without a coma corrector, can naturally show coma, field curvature, or edge degradation. The feature should distinguish even/radial border degradation from asymmetric corner or side degradation, and use labels such as "possible curvature/coma", "asymmetric field degradation", or "possible tilt" only when the pattern supports it.
 
-14. **Multi-Language UI**
-   Add a language selector and externalised text strings so the app can support International English, French, and other languages without touching the calculation code.
-
 15. **Flat Artefact Penalty Visibility**
    When a Flat frame gets a penalty for clouds, trees, dust shadows, plane trails, uneven illumination, or other artefacts, show the penalty text in red in the frame card and calibration report. The goal is to make severe Flat problems visually obvious instead of hiding them inside the general score.
 
@@ -111,11 +112,13 @@ Best options:
 
 17. **App Versioning And Release Notes**
    Define a versioning approach before packaging: visible app version in the UI, changelog/release notes, calculation-version tracking for CSV exports, and local-settings migration when defaults or score formulas change.
-   Status: started. The visible app/package version is now `0.3.13`, and CSV exports include `calculation_version`. A proper changelog/release-notes file and settings migrations still need to be designed.
+   Status: advanced in v0.4.0. The visible app/package version and CSV `calculation_version` are aligned, and `CHANGELOG.md` now records release notes. Settings migration rules still need to be designed before scoring defaults or stored-setting formats change.
 
 23. **Offline Moonlight Context**
+   Status: substantially implemented in v0.4.2 and extended through v0.4.5. The app groups mixed batches by observing session, object shot, filter, and site; calculates Moon phase, illumination, position, altitude/azimuth, target separation, and filter-aware potential exposure internally; and compares that context with median background structure/lift and relative star loss. Named coordinate sites can be stored locally and assigned per selected folder when FITS/XISF site headers are absent. Header-detected coordinates can also be given a saved name that is reused automatically for matching frames without replacing the header coordinates. The user can enter a maximum Moon penalty from 0% to 100%; 0% disables it, the actual reduction is scaled by exposure and median-lift evidence, and it is skipped when a cloud penalty applies.
    Calculate Moon conditions locally, without an internet connection. Use each frame's observation time from FITS/XISF metadata (`DATE-OBS`, `DATE-AVG`, or `DATE-END`, with exposure midpoint and filename fallbacks) and an observing location configured by the user or read from available site-coordinate headers.
    If the files do not contain usable observing-site coordinates, ask the user for latitude and longitude or let them choose a city from a bundled offline location list. Show the resolved coordinates for confirmation, support north/south and east/west clearly, and save named observing sites locally so the user does not have to enter the same location for every batch. City selection must not depend on online geocoding and should allow manual coordinates for observatories or other locations outside the bundled list.
    If target coordinates cannot be read from the image metadata or another local source, let the user enter the object's RA and DEC manually. Accept RA/DEC in both sexagesimal notation (`hh mm ss` and signed `dd mm ss`) and decimal degrees, validate and display the normalised coordinates before use, and apply them to the appropriate object-shot group rather than blindly to every Light frame in a mixed batch. Allow the user to save the coordinates with a target name for offline reuse.
    Show Moon illumination, phase/age, altitude, azimuth, and Moon-to-target angular separation when the Light frame has usable RA/DEC coordinates. Location is not needed for the illuminated fraction itself, but it is required to determine whether the Moon was above the local horizon and how strongly it could affect the photographed field.
-   Add the Moon data to frame details, session comparisons, and CSV export. Derive a filter-aware moonlight-risk indicator: broadband/OSC frames are generally more sensitive, while narrowband filters such as Ha and SII are less affected. Start with this as context and a warning rather than an automatic score penalty; a future optional **Penalise Moonlight** setting can be evaluated against real labelled batches.
+   Add the Moon data to frame details, session comparisons, and CSV export. Derive a filter-aware moonlight-risk indicator: broadband/OSC frames are generally more sensitive, while narrowband filters such as Ha and SII are less affected. The optional penalty must remain opt-in and should continue to be evaluated against real labelled batches.
+   Remaining work: optional saved target coordinates when RA/DEC is missing; an optional bundled offline city list; and WCS-aware image-gradient direction so a background gradient pointing away from the Moon can become supporting evidence.

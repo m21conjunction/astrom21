@@ -1,12 +1,13 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.3.13**.
+Current app version: **0.4.8**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
 ## What it does
 
 - Imports one or more local folders of images
+- Provides a remembered interface-language selector for International English, Spanish, Italian, French, and German
 - After results exist, newly added folders are analysed incrementally; existing measurements are kept and only new frames are decoded
 - Runs heavy per-frame measurements in a local Web Worker pool when the browser supports it, with a main-thread fallback
 - Uses full-resolution FITS/XISF pixels, while keeping Standard fast with sampled expensive passes and local star-window measurements
@@ -18,9 +19,10 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
   - highlight clipping on light frames
 - Detects likely tracking drift from central big/medium stars sharing a common direction, including wider trail checks for guiding, mount, or wind movement
 - Detects repeat drift where close, repeated star peaks appear at shifted positions
-- Detects broad clouds or haze using median-based background range and large-scale structure, then requires same-shot star-loss confirmation or very strong structure before applying a Light-frame cloud warning
+- Detects broad clouds or haze using transient batch anomalies: local tile-pattern residuals, background changes, star-count anomalies, and noise changes. Stable target structure and optical gradients are treated as background, not clouds
 - Repeat-drift uses a bright-star pass to catch multi-copy stars even when the full-frame orientation signal is weak
 - Applies cloud and tracking penalties, with repeat-drift and cloudy frames scored much lower than ordinary marginal frames
+- Keeps every final image quality score between `0` and `100` when the Sharpness, Noise, Roundness, Star Count, or Clipping weights are changed, and exports that final score in the CSV `quality` column
 - Ranks images and labels each one: `Keep`, `Review`, or `Discard`
 - Lets you select analysed images and copy them to another local folder
 - Shows larger stretched previews in a result grid, with eccentricity, HFR, star count, and mean brightness under each image
@@ -29,6 +31,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Shows amber preview/zoom rings and a warning when broad halos are suspected around bright stars
 - Lets you adjust preview stretch after analysis and click any preview to inspect it in a higher-resolution zoom view
 - Adds inspection tools for guide-star overlays, repeat-drift markers, clicked-star FWHM/HFR readouts, fit-to-window zoom, lens stretch control, and a 2x/4x/8x/12x/16x magnifier lens
+- Keeps the full preview image large with a compact single-row strip of 12 inspection-critical metrics; complete metadata remains on the frame card and in CSV export
 - Detects FITS/XISF filters, shows filter tabs, and keeps the All view available
 - Detects FITS/XISF light-frame RA/DEC, groups lights by object shot, and compares light scores inside the same object shot and filter
 - Uses focal length and pixel size metadata, or WCS pixel scale when available, to derive the allowed RA/DEC deviation for object-shot grouping
@@ -47,6 +50,12 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Can restore the default percentage values from the toolbar
 - Shows help markers beside the core scoring controls with calculation notes
 - Exports a CSV report with all analysis parameters, including calculation version and analysis pixel source
+- Groups Moon context by observing session, object shot, filter, and site; calculates illumination, phase, altitude, azimuth, target separation, and filter-aware potential exposure fully offline
+- Compares Moon plausibility with median-based background structure, lift, and relative star loss to distinguish likely clear moonlight, possible moonlit haze/cloud, cloud without strong Moon exposure, and other brightening
+- Offers a numeric **Maximum Moon Penalty** setting, `0%` by default, that reduces a Light-frame score only when plausible Moon exposure agrees with a smooth median-background lift; cloud-penalised frames are never penalised twice
+- Lists observing coordinates detected in FITS/XISF headers and lets the user save or update a local name that is reused automatically for matching coordinates
+
+Version `0.4.8` replaces the median-lift multiplier with a batch-residual cloud detector. It compares nearby same-object/filter frames using tile-pattern, background, star-count, and noise changes, so both bright and dark cloud events can be detected while stable gradients are suppressed. Version `0.4.7` was an interim median-lift weighting experiment. Version `0.4.6` restores more full-preview image area by replacing the repeated full metadata grid with a compact inspection strip. Version `0.4.5` lets header-detected observing coordinates be saved under a user-provided name without replacing the authoritative header coordinates. Version `0.4.4` replaced the Moon-penalty checkbox and fixed exposure-band caps with a user-entered maximum percentage. `0%` disables the penalty. Version `0.4.2` added session-aware Moon geometry, per-folder saved observing sites, and explanatory Moon/sky context. Version `0.4.0` added the multilingual interface; the approved terminology is listed in [TRANSLATIONS.md](TRANSLATIONS.md).
 
 All processing happens locally on your machine. No cloud calls are used.
 
@@ -90,12 +99,21 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - **Stop Analysis** terminates active workers and stops queued frames. Frames that already completed remain in the result grid, and clicking **Analyse** again processes the missing frames incrementally.
 - After large-batch analysis, scoring-control changes are debounced and preview-stretch thumbnail refresh runs in small UI-friendly chunks, so changing weights, halo penalty, or preview stretch does not lock the app in one long synchronous refresh.
 - The banner logo is bundled locally at `assets/logo-moon-conjunction.png`, so the app does not need the original external drive to display it.
+- The **Moon & Sky Context** panel is informational. **Moon illuminated** is the lit fraction of the visible lunar disc; **Moon Sep** is the great-circle angular distance from Moon to target, so it does not assume equal altitude; **Moon Alt** is the Moon's local altitude. Potential Moon Exposure combines those distinct values with target altitude and filter sensitivity. It never changes a score by itself.
+- Moon values use the UTC exposure midpoint. The app prefers `DATE-AVG`/`DATE-MID`, then derives the midpoint from `DATE-OBS` or `DATE-END` and exposure duration. `MJD`/`JD` variants and a timestamp in the file path are supported fallbacks. A timestamp without an explicit time zone is treated as UTC, which is standard for astronomy acquisition metadata.
+- Moon phase and position are calculated by bundled original JavaScript in `moon-calculation.js`. It uses low-precision lunar/solar elements and principal perturbations; it does not call a vendor, load an external script, use a location service, or require an internet connection.
+- Light frames are separated into observing sessions when dated exposures are more than eight hours apart. Context cards are then separated by object shot, filter, and observing site, so mixed-night and mixed-location batches are not summarised as one misleading range.
+- Site coordinates are read per frame from common FITS/XISF fields (`SITELAT`/`SITELONG`, `LAT-OBS`/`LONG-OBS`, `OBSLAT`/`OBSLONG`, `LATITUDE`/`LONGITUDE`, or `OBSGEO-B`/`OBSGEO-L`). Header coordinates have priority. **Manage observing sites** deduplicates detected header locations, lets the user save or update their local names, and automatically applies a saved name to later coordinates within about `0.002 deg` (roughly 200 m). The FITS/XISF coordinates and source remain authoritative. When coordinates are missing, saved sites can instead be assigned to individual folders. City names are not resolved because the app deliberately contains no online geocoder or bundled city database.
+- Potential Moon Exposure is `0` when the Moon is below the local horizon. Otherwise it combines illuminated fraction, Moon altitude, Moon-to-target separation, target altitude, and filter sensitivity. Broadband/unknown filters receive the full context factor, RGB is reduced, OIII is reduced further, and Ha/SII are least sensitive.
+- The sky label compares that astronomical context with observed background impact from median-based structure, median lift, and same-object/filter star loss. Strong structure and star loss are never excused by Moon exposure: they become **Possible moonlit haze/cloud** when Moon light is plausible, or **Cloud likely** when it is not. Smooth brightening can be labelled likely Moonlight or non-Moon brightening.
+- **Maximum Moon Penalty** is a remembered numeric entry from `0%` to `100%`; `0%` disables it. A Light frame must have at least Moderate Potential Moon Exposure, a meaningful smooth median-background lift, and no cloud-level structure or star loss. The actual multiplicative reduction is the entered maximum multiplied by the Moon-exposure fraction and median-lift evidence. If a cloud penalty applies, the Moon penalty is skipped to prevent double counting.
 - Shows the count of real astronomy frames and ignores hidden system sidecar files such as macOS `._...` entries.
 - FITS support targets image data in the primary HDU with BITPIX `8`, `16`, `32`, `64`, `-32`, or `-64`.
 - XISF support targets uncompressed monolithic `.xisf` files with attached image data. Supported sample formats are `UInt8`, `Int8`, `UInt16`, `Int16`, `UInt32`, `Int32`, `Float32`, and `Float64`. Compressed, distributed, external-block, complex, and 64-bit integer XISF data are reported as unsupported for now.
 - Preview stretch is adjustable after analysis; `0%` is neutral/linear and higher values progressively lift faint detail.
 - Preview images are rendered losslessly to avoid compression blocks in the grid and zoom viewer.
 - The zoom viewer keeps the full preview stable by showing the same grid-stretch thumbnail fit-to-window. The magnifier lens uses a separate high-resolution source, up to 9000 pixels on the longest side with a 48 MP safety budget, controlled by the **Lens Stretch** slider.
+- The zoom viewer shows only 12 compact Light-frame metrics: score/status, filter, object, sharpness, noise, HFR, roundness, eccentricity, star count, tracking, cloud status, and clipping. The strip stays on one horizontally scrollable row on narrow windows. RA/DEC, UTC, Moon details, camera geometry, exposure, temperature, mean, near-saturation, and guide-sample counts remain available on the frame card or in CSV export.
 - In the zoom star overlay, teal/green circles are clean guide/reference stars; amber circles are borderline-shape reference stars; orange circles are reliable corner reference stars with poor local shape, useful for spotting coma/field curvature/tilt; red circles are central guide-sample stars supporting a `Possible` or `Severe` tracking warning; yellow circles or links are repeat-drift candidates; and a white circle marks the clicked star whose HFR/FWHM/roundness is shown in the zoom status line. Tiny/faint detections are not circled because they are not reliable enough for guiding diagnosis.
 - Star overlays and star/tracking/halo calculations are only used for light frames; Flats, Biases, Darks, and Dark Flats are judged with calibration-specific measures instead.
 - FITS/XISF sharpness, roundness, HFR, and clipping are scored from linear image data, not from the stretched preview image.
@@ -130,7 +148,7 @@ In the desktop app, **Choose Output Folder** uses Electron's native folder picke
 - Mixed frame-type folders are grouped by type, so `Flat`, `Dark`, `Bias`, and `Dark Flat` frames are not scored as weak light frames.
 - For light frames, sharpness, noise, and star count are relative to the current object-shot/filter group; roundness and clipping use absolute scoring.
 - Light-frame clipping uses both `clipping_percent` and `near_saturation_percent`; the CSV also exports `clipping_pressure` and `clipping_score`. Calibration frames treat saturated bright pixels as calibration evidence, not as light-frame highlight clipping.
-- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when abnormal median-background range and structure are confirmed by same-object/filter star loss, by star loss plus median-background lift, or by an extreme structure case. Smooth background gradients or real target nebulosity can raise the cloud structure value, but they no longer trigger a warning or score penalty by themselves.
+- Cloud detection creates `Possible Cloud` or `Likely Cloud` warnings when a frame differs from nearby same-object/filter frames in several batch-relative measurements. Raw background range remains diagnostic, but stable range/structure alone does not trigger a warning.
 - Halo detection compares broad annuli around bright stars with the local background. It creates `Possible Halo` or `Likely Halo` warnings and amber preview rings; the same rings appear in the zoom view when the star overlay is enabled. By default it does not change the quality score; enable **Penalise Halo** to apply score penalties.
 - Calibration report cards appear when calibration frames are present. They summarize each Flat/Dark/Bias/Dark Flat set, including frame count, set median, median range, Flat artefact mismatches, median outliers, exposure/temperature match checks, hot-pixel outliers, and gradient/light-leak warnings.
 - Default scoring weights are Sharpness `40%`, Noise `15%`, Roundness `20%`, Star Count `15%`, and Clipping `10%`.

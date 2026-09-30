@@ -1,11 +1,12 @@
 {
   "name": "astro-sub-analyser",
   "productName": "Astronomy Sub Analyser",
-  "version": "0.3.13",
+  "version": "0.4.8",
   "description": "Offline astronomy frame analysis and selection tool.",
   "main": "electron/main.js",
   "private": true,
   "scripts": {
+    "test": "node tests/moon-calculation.test.js && node tests/worker-fits.test.js",
     "start": "electron .",
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
@@ -18,6 +19,8 @@
     "files": [
       "index.html",
       "styles.css",
+      "i18n.js",
+      "moon-calculation.js",
       "app.js",
       "assets/**/*",
       "electron/**/*"

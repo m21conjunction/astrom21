@@ -1,3 +1,68 @@
+const astroI18n = window.AstroI18n;
+
+function t(key, variables = {}) {
+  return astroI18n ? astroI18n.t(key, variables) : key;
+}
+
+function translatedPhrase(value) {
+  const text = String(value ?? "");
+  const calibrationMatch = text.match(/^(Light|Flat|Dark|Bias|Dark Flat) (signal high|saturated pixels|has bright pixels|uneven)$/);
+  if (calibrationMatch) {
+    const keys = {
+      "signal high": "warning.signalHigh",
+      "saturated pixels": "warning.saturatedPixels",
+      "has bright pixels": "warning.hasBrightPixels",
+      uneven: "warning.uneven"
+    };
+    return t(keys[calibrationMatch[2]], { type: displayFrameType(calibrationMatch[1]) });
+  }
+  return astroI18n ? astroI18n.translatePhrase(text) : text;
+}
+
+function displayFrameType(value) {
+  const keys = {
+    Light: "frame.light",
+    Flat: "frame.flat",
+    Dark: "frame.dark",
+    Bias: "frame.bias",
+    "Dark Flat": "frame.darkFlat",
+    Unknown: "common.unknown"
+  };
+  return keys[value] ? t(keys[value]) : String(value || t("common.unknown"));
+}
+
+function displayFilterName(value) {
+  return !value || value === "Unknown" ? t("common.unknown") : String(value);
+}
+
+function displayObjectShotLabel(value) {
+  return !value || value === "Unknown Object" ? t("common.unknownObject") : String(value);
+}
+
+function displayRecommendation(value) {
+  const keys = { Keep: "common.keep", Review: "common.review", Discard: "common.discard" };
+  return keys[value] ? t(keys[value]) : String(value);
+}
+
+const metricTranslationKeys = {
+  Type: "metric.type", Filter: "metric.filter", Status: "metric.status", Level: "metric.level",
+  Spread: "metric.spread", Noise: "metric.noise", Exp: "metric.exp", Temp: "metric.temp",
+  "Exp Match": "metric.expMatch", "Temp Match": "metric.tempMatch", Mean: "metric.mean",
+  "Set Delta": "metric.setDelta", "Hot Px": "metric.hotPx", "Dark Px": "metric.darkPx",
+  Gradient: "metric.gradient", Artefact: "metric.artefact", "Hist Diff": "metric.histDiff",
+  "Tile Diff": "metric.tileDiff", Sensor: "metric.sensor", Object: "metric.object", Scale: "metric.scale",
+  Focal: "metric.focal", Pixel: "metric.pixel", "Shot Offset": "metric.shotOffset", Sharp: "metric.sharp",
+  Round: "metric.round", Ecc: "metric.ecc", HFR: "metric.hfr", Stars: "metric.stars",
+  Cloud: "metric.cloud", Clip: "metric.clip", "Near Sat": "metric.nearSat", Tracking: "metric.tracking",
+  "Guide Stars": "metric.guideStars", UTC: "metric.utc", "Moon Lit": "metric.moonLit",
+  "Moon Phase": "metric.moonPhase", "Moon Age": "metric.moonAge", "Moon Alt": "metric.moonAlt",
+  "Moon Sep": "metric.moonSep", "Moon Exposure": "metric.moonExposure", Sky: "metric.sky", Site: "metric.site"
+};
+
+function displayMetricLabel(value) {
+  return metricTranslationKeys[value] ? t(metricTranslationKeys[value]) : translatedPhrase(value);
+}
+
 const folderInput = document.getElementById("folderInput");
 const analyzeBtn = document.getElementById("analyzeBtn");
 const stopAnalyzeBtn = document.getElementById("stopAnalyzeBtn");
@@ -5,6 +70,7 @@ const exportBtn = document.getElementById("exportBtn");
 const csvSeparatorSelect = document.getElementById("csvSeparator");
 const resetDefaultsBtn = document.getElementById("resetDefaultsBtn");
 const haloPenaltyCheckbox = document.getElementById("haloPenaltyCheckbox");
+const moonPenaltyPercentInput = document.getElementById("moonPenaltyPercent");
 const chooseOutputBtn = document.getElementById("chooseOutputBtn");
 const selectKeepBtn = document.getElementById("selectKeepBtn");
 const clearSelectionBtn = document.getElementById("clearSelectionBtn");
@@ -27,6 +93,16 @@ const recommendationTabs = document.getElementById("recommendationTabs");
 const filterThresholds = document.getElementById("filterThresholds");
 const filterWarning = document.getElementById("filterWarning");
 const calibrationReport = document.getElementById("calibrationReport");
+const moonIlluminationPanel = document.getElementById("moonIlluminationPanel");
+const moonSessionList = document.getElementById("moonSessionList");
+const moonSiteManager = document.getElementById("moonSiteManager");
+const moonSiteForm = document.getElementById("moonSiteForm");
+const moonSiteName = document.getElementById("moonSiteName");
+const moonSiteLatitude = document.getElementById("moonSiteLatitude");
+const moonSiteLongitude = document.getElementById("moonSiteLongitude");
+const moonSiteElevation = document.getElementById("moonSiteElevation");
+const moonDetectedSites = document.getElementById("moonDetectedSites");
+const moonFolderSites = document.getElementById("moonFolderSites");
 
 const sharpnessWeight = document.getElementById("sharpnessWeight");
 const noiseWeight = document.getElementById("noiseWeight");
@@ -67,6 +143,9 @@ const state = {
   selectedFiles: [],
   selectedFileKeys: new Set(),
   selectedFolders: [],
+  savedSites: [],
+  folderSiteAssignments: {},
+  siteManagerAutoOpened: false,
   nextFolderSelectionId: 1,
   analysisSummaryText: "",
   lastAnalysisRunNote: "",
@@ -96,7 +175,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.3.13";
+const appVersion = "0.4.8";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -193,6 +272,15 @@ const cameraModelHeaderKeys = [
   "IMAGER"
 ];
 const targetNameHeaderKeys = ["OBJECT", "OBJNAME", "TARGET", "TARGNAME", "OBJ-NAME"];
+const observationAverageTimeHeaderKeys = ["DATE-AVG", "DATE-MID", "MIDTIME"];
+const observationStartTimeHeaderKeys = ["DATE-OBS", "DATE-BEG", "DATE"];
+const observationEndTimeHeaderKeys = ["DATE-END"];
+const observationAverageMjdHeaderKeys = ["MJD-AVG", "MJD-MID"];
+const observationStartMjdHeaderKeys = ["MJD-OBS", "MJD-BEG"];
+const observationEndMjdHeaderKeys = ["MJD-END"];
+const observationAverageJdHeaderKeys = ["JD-AVG", "JD-MID"];
+const observationStartJdHeaderKeys = ["JD-OBS", "JD"];
+const observationEndJdHeaderKeys = ["JD-END"];
 const coordinateHeaderPairs = [
   { raKey: "OBJCTRA", decKey: "OBJCTDEC", raMode: "hours" },
   { raKey: "OBJRA", decKey: "OBJDEC", raMode: "hours" },
@@ -202,6 +290,16 @@ const coordinateHeaderPairs = [
   { raKey: "RA", decKey: "DEC", raMode: "auto" },
   { raKey: "CRVAL1", decKey: "CRVAL2", raMode: "degrees" }
 ];
+const siteCoordinateHeaderPairs = [
+  { latitudeKey: "SITELAT", longitudeKey: "SITELONG" },
+  { latitudeKey: "LAT-OBS", longitudeKey: "LONG-OBS" },
+  { latitudeKey: "OBSLAT", longitudeKey: "OBSLONG" },
+  { latitudeKey: "LATITUDE", longitudeKey: "LONGITUDE" },
+  { latitudeKey: "OBSGEO-B", longitudeKey: "OBSGEO-L" }
+];
+const siteElevationHeaderKeys = ["SITEELEV", "ALT-OBS", "OBSALT", "ELEVATIO", "ELEVATION", "OBSGEO-H"];
+const savedSiteMatchToleranceDegrees = 0.002;
+const observationSessionGapMs = 8 * 60 * 60 * 1000;
 const focalLengthHeaderKeys = ["FOCALLEN", "FOC_LEN", "FOCLEN", "FOCAL", "EFL"];
 const pixelSizeHeaderKeyPairs = [
   ["XPIXSZ", "YPIXSZ"],
@@ -511,7 +609,7 @@ function ignoredFileCount(stats) {
 }
 
 function frameCountText(count) {
-  return count === 1 ? "1 astronomy frame" : `${count} astronomy frames`;
+  return count === 1 ? t("frames.one") : t("frames.many", { count });
 }
 
 function rootPathForSelectedFile(file) {
@@ -619,7 +717,7 @@ function renderSelectedFolderList() {
   selectedFolderList.hidden = false;
   selectedFolderList.innerHTML = state.selectedFolders
     .map((folder) => {
-      const ignoredText = folder.ignoredCount > 0 ? `, ${folder.ignoredCount} ignored` : "";
+      const ignoredText = folder.ignoredCount > 0 ? `, ${t("folders.ignored", { count: folder.ignoredCount })}` : "";
       return `
         <div class="selected-folder-row">
           <span class="selected-folder-path" title="${escapeHtml(folder.displayPath)}">${escapeHtml(folder.displayPath)}</span>
@@ -638,13 +736,16 @@ function updateFolderFileCount() {
 
   const files = state.selectedFiles;
   if (files.length === 0) {
-    folderFileCount.textContent = "No folders selected";
+    folderFileCount.textContent = t("folders.none");
     renderSelectedFolderList();
     return;
   }
 
   const stats = selectedFileStats(files);
-  const folderText = state.selectedFolders.length === 1 ? "1 folder" : `${state.selectedFolders.length} folders`;
+  const folderText =
+    state.selectedFolders.length === 1
+      ? t("folders.one", { count: 1 })
+      : t("folders.many", { count: state.selectedFolders.length });
   const ignoredCount = ignoredFileCount(stats);
   folderFileCount.textContent =
     ignoredCount > 0
@@ -1193,6 +1294,181 @@ function detectCoordinatesForFile(file, header = null) {
   );
 }
 
+function parseSiteCoordinate(value, kind) {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    return NaN;
+  }
+  const directionMatch = text.match(/([NSEW])\s*$/i) || text.match(/^\s*([NSEW])/i);
+  const direction = directionMatch ? directionMatch[1].toUpperCase() : "";
+  const cleaned = text.replace(/[NSEW]/gi, "").trim();
+  const parts = sexagesimalParts(cleaned);
+  const hasSexagesimalSyntax = /[:dDmMsS]/.test(cleaned) || parts.length >= 2;
+  let numeric = hasSexagesimalSyntax ? parseSexagesimalMagnitude(parts) : numericMetadataValue(cleaned);
+  if (!Number.isFinite(numeric)) {
+    return NaN;
+  }
+  if (direction === "S" || direction === "W") {
+    numeric = -Math.abs(numeric);
+  } else if (direction === "N" || direction === "E") {
+    numeric = Math.abs(numeric);
+  }
+  const limit = kind === "latitude" ? 90 : 180;
+  return numeric >= -limit && numeric <= limit ? numeric : NaN;
+}
+
+function detectObservingSiteFromHeader(header) {
+  if (!header) {
+    return null;
+  }
+  for (const pair of siteCoordinateHeaderPairs) {
+    if (
+      !Object.prototype.hasOwnProperty.call(header, pair.latitudeKey) ||
+      !Object.prototype.hasOwnProperty.call(header, pair.longitudeKey)
+    ) {
+      continue;
+    }
+    const latitudeDegrees = parseSiteCoordinate(header[pair.latitudeKey], "latitude");
+    const longitudeDegrees = parseSiteCoordinate(header[pair.longitudeKey], "longitude");
+    if (!Number.isFinite(latitudeDegrees) || !Number.isFinite(longitudeDegrees)) {
+      continue;
+    }
+    const elevationInfo = detectNumericMetadataFromHeader(header, siteElevationHeaderKeys);
+    return {
+      latitudeDegrees,
+      longitudeDegrees,
+      elevationMetres: elevationInfo ? elevationInfo.value : NaN,
+      name: "",
+      source: headerKeywordSource(header, `${pair.latitudeKey}/${pair.longitudeKey}`)
+    };
+  }
+  return null;
+}
+
+function detectObservingSiteForFile(file, header = null) {
+  return (
+    detectObservingSiteFromHeader(header) || {
+      latitudeDegrees: NaN,
+      longitudeDegrees: NaN,
+      elevationMetres: NaN,
+      name: "",
+      source: "None"
+    }
+  );
+}
+
+function parseObservationDateValue(value, timeFallback = "") {
+  const raw = textMetadataValue(value).replace(/^['"]|['"]$/g, "").trim();
+  if (!raw) {
+    return NaN;
+  }
+  let text = raw.replace(/\s+/, "T");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text) && timeFallback) {
+    text = `${text}T${textMetadataValue(timeFallback).trim()}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(text) && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)) {
+    text += "Z";
+  }
+  const timestamp = Date.parse(text);
+  return Number.isFinite(timestamp) ? timestamp : NaN;
+}
+
+function julianDateToTimestamp(julianDate) {
+  const value = numericMetadataValue(julianDate);
+  return Number.isFinite(value) ? (value - 2440587.5) * 86400000 : NaN;
+}
+
+function modifiedJulianDateToTimestamp(modifiedJulianDate) {
+  const value = numericMetadataValue(modifiedJulianDate);
+  return Number.isFinite(value) ? julianDateToTimestamp(value + 2400000.5) : NaN;
+}
+
+function firstObservationTimeFromHeader(header, keys, parser, timeFallback = "") {
+  if (!header) {
+    return null;
+  }
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(header, key)) {
+      continue;
+    }
+    const timestampMs = parser(header[key], timeFallback);
+    if (Number.isFinite(timestampMs)) {
+      return { timestampMs, source: headerKeywordSource(header, key) };
+    }
+  }
+  return null;
+}
+
+function detectObservationTimeFromPath(file) {
+  const path = normalizedFilePath(file);
+  const match = path.match(/(20\d{2})[-_](\d{2})[-_](\d{2})[T_\s-](\d{2})[-_:](\d{2})[-_:](\d{2}(?:\.\d+)?)/);
+  if (!match) {
+    return null;
+  }
+  const second = Number(match[6]);
+  const wholeSecond = Math.trunc(second);
+  const milliseconds = Math.round((second - wholeSecond) * 1000);
+  const timestampMs = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    wholeSecond,
+    milliseconds
+  );
+  return Number.isFinite(timestampMs) ? { timestampMs, source: "Filename (assumed UTC)" } : null;
+}
+
+function detectObservationTimeForFile(file, header = null, exposureSeconds = NaN) {
+  const timeFallback = header && (header["TIME-OBS"] || header.TIMEOBS || "");
+  const halfExposureMs = Number.isFinite(exposureSeconds) && exposureSeconds > 0 ? exposureSeconds * 500 : 0;
+  const average =
+    firstObservationTimeFromHeader(header, observationAverageTimeHeaderKeys, parseObservationDateValue, timeFallback) ||
+    firstObservationTimeFromHeader(header, observationAverageMjdHeaderKeys, modifiedJulianDateToTimestamp) ||
+    firstObservationTimeFromHeader(header, observationAverageJdHeaderKeys, julianDateToTimestamp);
+  if (average) {
+    return { ...average, iso: new Date(average.timestampMs).toISOString() };
+  }
+
+  const start =
+    firstObservationTimeFromHeader(header, observationStartTimeHeaderKeys, parseObservationDateValue, timeFallback) ||
+    firstObservationTimeFromHeader(header, observationStartMjdHeaderKeys, modifiedJulianDateToTimestamp) ||
+    firstObservationTimeFromHeader(header, observationStartJdHeaderKeys, julianDateToTimestamp);
+  if (start) {
+    const timestampMs = start.timestampMs + halfExposureMs;
+    return {
+      timestampMs,
+      source: halfExposureMs > 0 ? `${start.source} + exposure midpoint` : start.source,
+      iso: new Date(timestampMs).toISOString()
+    };
+  }
+
+  const end =
+    firstObservationTimeFromHeader(header, observationEndTimeHeaderKeys, parseObservationDateValue, timeFallback) ||
+    firstObservationTimeFromHeader(header, observationEndMjdHeaderKeys, modifiedJulianDateToTimestamp) ||
+    firstObservationTimeFromHeader(header, observationEndJdHeaderKeys, julianDateToTimestamp);
+  if (end) {
+    const timestampMs = end.timestampMs - halfExposureMs;
+    return {
+      timestampMs,
+      source: halfExposureMs > 0 ? `${end.source} - exposure midpoint` : end.source,
+      iso: new Date(timestampMs).toISOString()
+    };
+  }
+
+  const pathTime = detectObservationTimeFromPath(file);
+  if (!pathTime) {
+    return { timestampMs: NaN, iso: "", source: "None" };
+  }
+  const timestampMs = pathTime.timestampMs + halfExposureMs;
+  return {
+    timestampMs,
+    source: halfExposureMs > 0 ? `${pathTime.source} + exposure midpoint` : pathTime.source,
+    iso: new Date(timestampMs).toISOString()
+  };
+}
+
 function averageFinite(values) {
   const finite = values.filter((value) => Number.isFinite(value) && value > 0);
   if (finite.length === 0) {
@@ -1406,7 +1682,7 @@ function normalizeAnalysisMode(mode) {
 }
 
 function analysisModeLabel(mode = getAnalysisMode()) {
-  return analysisModeConfigs[normalizeAnalysisMode(mode)].label;
+  return normalizeAnalysisMode(mode) === "expert" ? t("controls.expert") : t("controls.standard");
 }
 
 function resultAnalysisMode(result) {
@@ -1701,19 +1977,22 @@ function updateSelectAllState() {
 
 function setOutputLabel() {
   if (!hasOutputFolderSupport()) {
-    outputLabel.textContent = "Output folder: unsupported in this browser";
+    outputLabel.textContent = t("output.unsupported");
     return;
   }
   if (isDesktopApp()) {
-    outputLabel.textContent = `Output folder: ${state.outputDirectoryName || "not selected"}`;
+    outputLabel.textContent = state.outputDirectoryName
+      ? t("output.selected", { name: state.outputDirectoryName })
+      : t("output.notSelected");
     return;
   }
-  const folderName = state.outputDirectoryHandle ? state.outputDirectoryHandle.name : "not selected";
-  outputLabel.textContent = `Output folder: ${folderName}`;
+  outputLabel.textContent = state.outputDirectoryHandle
+    ? t("output.selected", { name: state.outputDirectoryHandle.name })
+    : t("output.notSelected");
 }
 
 function setSummaryMessage(extraText = "") {
-  const baseText = state.analysisSummaryText || "Select one or more folders and click Analyse.";
+  const baseText = state.analysisSummaryText || t("summary.initial");
   if (extraText) {
     summaryEl.innerHTML = `<p>${escapeHtml(baseText)}</p><p>${escapeHtml(extraText)}</p>`;
     return;
@@ -1728,7 +2007,7 @@ function setTransientStatus(text) {
 function formatTimerSeconds(seconds, approximate = false) {
   const numeric = Number(seconds);
   if (!Number.isFinite(numeric)) {
-    return "estimating";
+    return t("progress.estimating");
   }
   const rounded = Math.max(0, Math.ceil(numeric));
   return `${approximate ? "~" : ""}${rounded}s`;
@@ -1737,7 +2016,7 @@ function formatTimerSeconds(seconds, approximate = false) {
 function formatMemoryGb(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
-    return "unknown memory";
+    return t("progress.unknownMemory");
   }
   return numeric >= 10 ? `${numeric.toFixed(0)} GB` : `${numeric.toFixed(1)} GB`;
 }
@@ -1757,20 +2036,31 @@ function estimatedAnalysisRemainingSeconds(progress, now = Date.now()) {
 }
 
 function analysisImageCountText(count, adjective = "") {
-  const prefix = adjective ? `${adjective} ` : "";
-  return count === 1 ? `1 ${prefix}image` : `${count} ${prefix}images`;
+  const translatedAdjective = adjective === "new" ? t("progress.new") : adjective;
+  const prefix = translatedAdjective ? `${translatedAdjective} ` : "";
+  return count === 1
+    ? t("progress.oneImage", { adjective: prefix })
+    : t("progress.manyImages", { count, adjective: prefix });
 }
 
 function analysisProgressHeadline(progress) {
   const targetText =
     progress.alreadyAnalyzed > 0 ? analysisImageCountText(progress.total, "new") : analysisImageCountText(progress.total);
-  const keptText = progress.alreadyAnalyzed > 0 ? ` ${progress.alreadyAnalyzed} existing result(s) kept.` : "";
-  const failureText = progress.failures > 0 ? ` ${progress.failures} failed.` : "";
+  const keptText = progress.alreadyAnalyzed > 0 ? t("progress.existingKept", { count: progress.alreadyAnalyzed }) : "";
+  const failureText = progress.failures > 0 ? t("progress.failed", { count: progress.failures }) : "";
   const workerText =
     progress.workerPlan && progress.concurrency > 0
-      ? ` using ${progress.concurrency} auto worker${progress.concurrency === 1 ? "" : "s"}`
+      ? t("progress.workers", { count: progress.concurrency })
       : "";
-  return `Analysing ${targetText} locally in ${analysisModeLabel(progress.analysisMode)} mode${workerText}... ${progress.completed}/${progress.total}.${keptText}${failureText}`;
+  return t("progress.headline", {
+    target: targetText,
+    mode: analysisModeLabel(progress.analysisMode),
+    workers: workerText,
+    done: progress.completed,
+    total: progress.total,
+    kept: keptText,
+    failed: failureText
+  });
 }
 
 function analysisWorkerPlanText(progress) {
@@ -1780,13 +2070,18 @@ function analysisWorkerPlanText(progress) {
   }
   const memorySourceText =
     plan.memorySource === "desktop"
-      ? "desktop memory"
+      ? t("progress.desktopMemory")
       : plan.memorySource === "browser"
-        ? "browser memory"
+        ? t("progress.browserMemory")
         : plan.memorySource === "heap"
-          ? "browser heap limit"
-          : "fallback memory estimate";
-  return `Auto workers: ${plan.workerCount}/${plan.logicalCores} logical cores, ${memorySourceText} ${formatMemoryGb(plan.memoryGb)}.`;
+          ? t("progress.heapMemory")
+          : t("progress.fallbackMemory");
+  return t("progress.autoWorkers", {
+    workers: plan.workerCount,
+    cores: plan.logicalCores,
+    memorySource: memorySourceText,
+    memory: formatMemoryGb(plan.memoryGb)
+  });
 }
 
 function renderAnalysisProgress(progress, note = "") {
@@ -1800,8 +2095,11 @@ function renderAnalysisProgress(progress, note = "") {
   const timerText = note
     ? note
     : Number.isFinite(remaining)
-      ? `Elapsed: ${formatTimerSeconds(elapsed)}. Remaining: ${formatTimerSeconds(remaining, true)}.`
-      : `Elapsed: ${formatTimerSeconds(elapsed)}. Remaining: estimating after first frame.`;
+      ? t("progress.elapsedRemaining", {
+          elapsed: formatTimerSeconds(elapsed),
+          remaining: formatTimerSeconds(remaining, true)
+        })
+      : t("progress.elapsedEstimating", { elapsed: formatTimerSeconds(elapsed) });
   const workerPlanText = analysisWorkerPlanText(progress);
   const detailText = workerPlanText ? `${timerText} ${workerPlanText}` : timerText;
 
@@ -1941,6 +2239,111 @@ function sanitizeThresholdSettings(settings = {}) {
   return thresholds;
 }
 
+function sanitizeSavedSites(sites) {
+  if (!Array.isArray(sites)) {
+    return [];
+  }
+  const seen = new Set();
+  return sites
+    .map((site, index) => {
+      const latitudeDegrees = Number(site && site.latitudeDegrees);
+      const longitudeDegrees = Number(site && site.longitudeDegrees);
+      const elevationMetres = Number(site && site.elevationMetres);
+      const name = String((site && site.name) || "").trim().slice(0, 64);
+      const id = String((site && site.id) || `site-${index + 1}`).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+      if (!id || seen.has(id) || !name || !Number.isFinite(latitudeDegrees) || !Number.isFinite(longitudeDegrees)) {
+        return null;
+      }
+      if (Math.abs(latitudeDegrees) > 90 || Math.abs(longitudeDegrees) > 180) {
+        return null;
+      }
+      seen.add(id);
+      return {
+        id,
+        name,
+        latitudeDegrees,
+        longitudeDegrees,
+        elevationMetres: Number.isFinite(elevationMetres) ? elevationMetres : NaN
+      };
+    })
+    .filter(Boolean);
+}
+
+function sanitizeFolderSiteAssignments(assignments, sites = state.savedSites) {
+  const validIds = new Set(sites.map((site) => site.id));
+  const sanitized = {};
+  if (!assignments || typeof assignments !== "object") {
+    return sanitized;
+  }
+  for (const [folder, siteId] of Object.entries(assignments)) {
+    const folderName = String(folder || "").trim().slice(0, 256);
+    const id = String(siteId || "");
+    if (folderName && validIds.has(id)) {
+      sanitized[folderName] = id;
+    }
+  }
+  return sanitized;
+}
+
+function siteCoordinateDistanceDegrees(latitudeA, longitudeA, latitudeB, longitudeB) {
+  if (![latitudeA, longitudeA, latitudeB, longitudeB].every(Number.isFinite)) {
+    return Infinity;
+  }
+  const latitudeDifference = latitudeA - latitudeB;
+  let longitudeDifference = Math.abs(longitudeA - longitudeB) % 360;
+  longitudeDifference = longitudeDifference > 180 ? 360 - longitudeDifference : longitudeDifference;
+  const meanLatitudeRadians = ((latitudeA + latitudeB) * Math.PI) / 360;
+  return Math.hypot(latitudeDifference, longitudeDifference * Math.cos(meanLatitudeRadians));
+}
+
+function matchingSavedSiteForCoordinates(latitudeDegrees, longitudeDegrees) {
+  let closest = null;
+  let closestDistance = Infinity;
+  for (const site of state.savedSites) {
+    const distance = siteCoordinateDistanceDegrees(
+      latitudeDegrees,
+      longitudeDegrees,
+      site.latitudeDegrees,
+      site.longitudeDegrees
+    );
+    if (distance <= savedSiteMatchToleranceDegrees && distance < closestDistance) {
+      closest = site;
+      closestDistance = distance;
+    }
+  }
+  return closest;
+}
+
+function saveNamedSite(nameValue, latitudeDegrees, longitudeDegrees, elevationMetres = NaN) {
+  const name = String(nameValue || "").trim().slice(0, 64);
+  if (
+    !name ||
+    !Number.isFinite(latitudeDegrees) ||
+    !Number.isFinite(longitudeDegrees) ||
+    Math.abs(latitudeDegrees) > 90 ||
+    Math.abs(longitudeDegrees) > 180
+  ) {
+    return null;
+  }
+  const existing = matchingSavedSiteForCoordinates(latitudeDegrees, longitudeDegrees);
+  if (existing) {
+    existing.name = name;
+    if (Number.isFinite(elevationMetres)) {
+      existing.elevationMetres = elevationMetres;
+    }
+    return existing;
+  }
+  const site = {
+    id: `site-${Date.now()}-${state.savedSites.length + 1}`,
+    name,
+    latitudeDegrees,
+    longitudeDegrees,
+    elevationMetres: Number.isFinite(elevationMetres) ? elevationMetres : NaN
+  };
+  state.savedSites.push(site);
+  return site;
+}
+
 function getCsvSeparatorKey() {
   const selected = csvSeparatorSelect ? csvSeparatorSelect.value : defaultCsvSeparatorKey;
   return Object.prototype.hasOwnProperty.call(csvSeparators, selected) ? selected : defaultCsvSeparatorKey;
@@ -1993,6 +2396,8 @@ function applyStoredSettings() {
   setRangeValue(clipWeight, scoreSettings.clipWeight);
   setRangeValue(previewStretch, settings.previewStretch);
   state.filterThresholds = sanitizeThresholdSettings(settings.filterThresholds);
+  state.savedSites = sanitizeSavedSites(settings.savedSites);
+  state.folderSiteAssignments = sanitizeFolderSiteAssignments(settings.folderSiteAssignments, state.savedSites);
   if (copyByFilterCheckbox) {
     copyByFilterCheckbox.checked = Boolean(settings.copyByFilter);
   }
@@ -2021,6 +2426,13 @@ function applyStoredSettings() {
   }
   if (haloPenaltyCheckbox) {
     haloPenaltyCheckbox.checked = Boolean(settings.haloPenalty);
+  }
+  if (moonPenaltyPercentInput) {
+    const savedMoonPenalty = Number(settings.moonPenaltyPercent);
+    const migratedMoonPenalty = settings.moonPenalty ? 12 : 0;
+    moonPenaltyPercentInput.value = String(
+      clamp(Number.isFinite(savedMoonPenalty) ? savedMoonPenalty : migratedMoonPenalty, 0, 100)
+    );
   }
   state.starOverlayActive = Boolean(settings.starOverlayActive);
 
@@ -2072,7 +2484,7 @@ function resetDefaultPercentages() {
     }
   }
 
-  setSummaryMessage("Default percentage values restored.");
+  setSummaryMessage(t("status.defaultsRestored"));
 }
 
 function saveSettings() {
@@ -2089,9 +2501,12 @@ function saveSettings() {
         sharpnessMode: getSharpnessMode(),
         analysisMode: getAnalysisMode(),
         filterThresholds: state.filterThresholds,
+        savedSites: state.savedSites,
+        folderSiteAssignments: state.folderSiteAssignments,
         copyByFilter: copyByFilterCheckbox ? copyByFilterCheckbox.checked : false,
         copyByType: copyByTypeCheckbox ? copyByTypeCheckbox.checked : false,
         haloPenalty: haloPenaltyCheckbox ? haloPenaltyCheckbox.checked : false,
+        moonPenaltyPercent: getMoonPenaltyPercent(),
         csvSeparator: getCsvSeparatorKey(),
         zoomMagnifierPower: zoomMagnifierPower ? Number(zoomMagnifierPower.value) : defaultZoomLensMagnification,
         zoomLensStretch: zoomStretch ? getZoomLensStretchValue() : defaultPreviewStretch,
@@ -2180,6 +2595,18 @@ function getWeights() {
 
 function haloPenaltyEnabled() {
   return Boolean(haloPenaltyCheckbox && haloPenaltyCheckbox.checked);
+}
+
+function moonPenaltyEnabled() {
+  return getMoonPenaltyPercent() > 0;
+}
+
+function getMoonPenaltyPercent() {
+  if (!moonPenaltyPercentInput) {
+    return 0;
+  }
+  const value = Number(moonPenaltyPercentInput.value);
+  return Number.isFinite(value) ? clamp(value, 0, 100) : 0;
 }
 
 function getSharpnessMode() {
@@ -4227,6 +4654,16 @@ function calibrationLabel(result) {
   return result.calibrationWarnings[0];
 }
 
+function displayCalibrationLabel(result) {
+  if (!isCalibrationFrame(result)) {
+    return t("calibration.lightAnalysis");
+  }
+  if (result.calibrationWarnings.length === 0) {
+    return `${displayFrameType(result.frameType)} ${t("common.ok")}`;
+  }
+  return translatedPhrase(result.calibrationWarnings[0]);
+}
+
 function computeCalibrationScore(result) {
   result.calibrationWarnings = [];
   result.calibrationSeverity = "None";
@@ -4404,9 +4841,9 @@ function calibrationSetKey(result) {
 function calibrationSetLabelFromKey(key) {
   const [frameType, filterName] = key.split("|");
   if (filterName && filterName !== "All") {
-    return `${frameType} / ${filterName}`;
+    return `${displayFrameType(frameType)} / ${displayFilterName(filterName)}`;
   }
-  return frameType || unknownFrameTypeName;
+  return displayFrameType(frameType || unknownFrameTypeName);
 }
 
 function sortedFiniteValues(results, field) {
@@ -4673,6 +5110,14 @@ function flatArtifactLabel(result) {
     return "Review";
   }
   return "OK";
+}
+
+function displayFlatArtifactLabel(result) {
+  const label = flatArtifactLabel(result);
+  if (label === "n/a") {
+    return t("common.notAvailable");
+  }
+  return translatedPhrase(label);
 }
 
 function applyFlatArtifactConsistency(groupResults) {
@@ -5069,7 +5514,79 @@ function resetCloudAssessment(result) {
   result.cloudScore = 0;
   result.cloudStarLossScore = 0;
   result.cloudMedianLiftScore = 0;
+  result.cloudTileResidualScore = 0;
+  result.cloudBackgroundChangeScore = 0;
+  result.cloudStarAnomalyScore = 0;
+  result.cloudNoiseChangeScore = 0;
+  result.cloudTemporalAnomalyScore = 0;
   result.cloudSummary = "No cloud warning";
+  result.skyConditionKey = "indeterminate";
+  result.skyConditionConfidence = "low";
+  result.skyConditionSummary = "Insufficient evidence";
+  result.observedBackgroundImpactScore = 0;
+}
+
+function updateSkyCondition(result, evidence) {
+  const { structureScore, rangePercent, starLossScore, medianLiftScore, hasRelativeReference } = evidence;
+  const moonExposure = Number(result.moonExposureScore);
+  const moonAvailable = Number.isFinite(moonExposure);
+  const moonPlausible = moonAvailable && moonExposure >= 22;
+  const strongMoon = moonAvailable && moonExposure >= 48;
+  const observedImpact = clamp(structureScore * 0.5 + starLossScore * 0.32 + medianLiftScore * 0.18, 0, 1);
+  result.observedBackgroundImpactScore = observedImpact;
+
+  if (result.cloudSeverity === "Likely" || result.cloudSeverity === "Possible") {
+    result.skyConditionKey = moonPlausible ? "moonlitHaze" : "cloudLikely";
+    result.skyConditionConfidence = result.cloudSeverity === "Likely" ? "high" : "moderate";
+    result.skyConditionSummary = moonPlausible
+      ? `${result.cloudSeverity} cloud or haze with plausible Moon illumination; structure ${formatMetric(
+          structureScore,
+          2
+        )}, star-loss signal ${formatMetric(starLossScore * 100, 0)}%`
+      : `${result.cloudSeverity} cloud evidence without strong Moon exposure; structure ${formatMetric(
+          structureScore,
+          2
+        )}, star-loss signal ${formatMetric(starLossScore * 100, 0)}%`;
+    return;
+  }
+
+  if (
+    strongMoon &&
+    medianLiftScore >= 0.28 &&
+    structureScore < cloudPossibleStructureScore &&
+    starLossScore < cloudSupportStarLossScore
+  ) {
+    result.skyConditionKey = "moonlightLikely";
+    result.skyConditionConfidence = hasRelativeReference ? "moderate" : "low";
+    result.skyConditionSummary = `Smooth background lift is consistent with Moon exposure ${formatMetric(moonExposure, 0)}/100`;
+    return;
+  }
+
+  if (
+    moonAvailable &&
+    moonExposure < 22 &&
+    medianLiftScore >= 0.45 &&
+    structureScore < cloudPossibleStructureScore &&
+    starLossScore < cloudSupportStarLossScore
+  ) {
+    result.skyConditionKey = "brightening";
+    result.skyConditionConfidence = hasRelativeReference ? "moderate" : "low";
+    result.skyConditionSummary = "Smooth background brightening is not explained by the Moon; twilight or light pollution is possible";
+    return;
+  }
+
+  if (observedImpact < 0.2 && rangePercent < cloudPossibleBackgroundRangePercent) {
+    result.skyConditionKey = "clear";
+    result.skyConditionConfidence = hasRelativeReference ? "moderate" : "low";
+    result.skyConditionSummary = moonPlausible
+      ? "No material structure or star-loss evidence despite plausible Moon exposure"
+      : "No material cloud, structure, or star-loss evidence";
+    return;
+  }
+
+  result.skyConditionKey = "indeterminate";
+  result.skyConditionConfidence = "low";
+  result.skyConditionSummary = "Background evidence is mixed or lacks enough comparable frames";
 }
 
 function updateCloudAssessmentForGroup(results) {
@@ -5079,6 +5596,10 @@ function updateCloudAssessmentForGroup(results) {
     .sort((a, b) => a - b);
   const backgroundLevels = results
     .map((result) => result.median)
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  const backgroundPercentLevels = results
+    .map((result) => result.medianPercent)
     .filter((value) => Number.isFinite(value))
     .sort((a, b) => a - b);
 
@@ -5091,11 +5612,25 @@ function updateCloudAssessmentForGroup(results) {
   const backgroundDenominator = Math.max(Math.abs(backgroundMedian) * 0.04, backgroundRange * 0.6, 1e-6);
   const hasRelativeStarReference = starCounts.length >= cloudRelativePeerMinimum;
   const hasRelativeBackgroundReference = backgroundLevels.length >= cloudRelativePeerMinimum;
+  const orderedResults = results
+    .map((result, index) => ({ result, index }))
+    .sort((a, b) => {
+      const aTime = Number(a.result.observationTimestampMs);
+      const bTime = Number(b.result.observationTimestampMs);
+      if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+        return aTime - bTime;
+      }
+      return a.index - b.index;
+    });
+  const orderedIndexByResult = new Map(orderedResults.map((entry, index) => [entry.result, index]));
+  const groupMedianPercent =
+    backgroundPercentLevels.length > 0 ? percentileFromSorted(backgroundPercentLevels, 0.5) : NaN;
+  const groupStarMedian = finiteMedian(starCounts);
+  const groupStarDeviation = finiteMedian(starCounts.map((value) => Math.abs(value - groupStarMedian)));
+  const groupStarScale = Math.max(groupStarDeviation * 1.4826, groupStarMedian * 0.015, 1);
 
   for (const result of results) {
     resetCloudAssessment(result);
-    const structureScore = clamp(Number(result.cloudStructureScore) || 0, 0, 1);
-    const rangePercent = Number(result.cloudBackgroundRangePercent) || 0;
     const starLossScore =
       hasRelativeStarReference && starReference > 0
         ? clamp((starReference - (Number(result.starCount) || 0)) / (starReference * 0.55), 0, 1)
@@ -5104,76 +5639,124 @@ function updateCloudAssessmentForGroup(results) {
       hasRelativeBackgroundReference && Number.isFinite(result.median) && Number.isFinite(backgroundMedian)
         ? clamp((result.median - backgroundMedian) / backgroundDenominator, 0, 1)
         : 0;
-    const pairedEvidence = Math.min(structureScore, Math.max(starLossScore, medianLiftScore));
-    const rangeStructurePossible =
-      rangePercent >= cloudPossibleBackgroundRangePercent && structureScore >= cloudPossibleStructureScore;
-    const rangeStructureLikely =
-      rangePercent >= cloudLikelyBackgroundRangePercent && structureScore >= cloudLikelyStructureScore;
-    const medianLiftWithStarLossEvidence =
-      starLossScore >= cloudMedianLiftMinimumStarLossScore && medianLiftScore >= cloudSupportMedianLiftScore;
-    const supportEvidence = starLossScore >= cloudSupportStarLossScore || medianLiftWithStarLossEvidence;
-    const strongSupportEvidence =
-      starLossScore >= cloudStrongStarLossScore ||
-      (starLossScore >= cloudSupportStarLossScore && medianLiftScore >= cloudStrongMedianLiftScore);
-    const extremeStructureEvidence =
-      (rangePercent >= cloudExtremeBackgroundRangePercent &&
-        structureScore >= cloudExtremeStructureScore &&
-        medianLiftScore >= cloudStrongMedianLiftScore) ||
-      (rangePercent >= cloudExtremeSingleFrameBackgroundRangePercent &&
-        structureScore >= cloudExtremeSingleFrameStructureScore);
-    let cloudScore = clamp(
-      structureScore * 0.54 + starLossScore * 0.18 + medianLiftScore * 0.14 + pairedEvidence * 0.24,
+    const orderedIndex = orderedIndexByResult.get(result) ?? 0;
+    const neighbourEntries = [
+      ...orderedResults.slice(Math.max(0, orderedIndex - 3), orderedIndex),
+      ...orderedResults.slice(orderedIndex + 1, orderedIndex + 4)
+    ];
+    const neighbours = neighbourEntries.map((entry) => entry.result);
+    const hasTemporalReference = neighbours.length >= 2;
+    const localTileReference = medianArray(neighbours.map((item) => item.cloudTileSignature || []));
+    const tileDistance = tileSignatureDistance(result.cloudTileSignature || [], localTileReference);
+    const tileResidualScore =
+      hasTemporalReference && Number.isFinite(tileDistance) ? clamp((tileDistance - 2.5) / 10, 0, 1) : 0;
+
+    const localMedianValues = neighbours.map((item) => item.medianPercent).filter((value) => Number.isFinite(value));
+    const localMedianReference = finiteMedian(localMedianValues);
+    const localMedianDeviation = finiteMedian(
+      localMedianValues.map((value) => Math.abs(value - localMedianReference))
+    );
+    const localMedianScale = Math.max(localMedianDeviation * 1.4826, Math.abs(localMedianReference) * 0.004, 0.01);
+    const localMedianDelta =
+      Number.isFinite(result.medianPercent) && Number.isFinite(localMedianReference)
+        ? Math.abs(result.medianPercent - localMedianReference)
+        : 0;
+    const localBackgroundChangeScore =
+      hasTemporalReference
+        ? clamp((localMedianDelta - localMedianScale) / Math.max(localMedianScale * 2, 0.02), 0, 1)
+        : 0;
+    const groupMedianDelta =
+      Number.isFinite(result.medianPercent) && Number.isFinite(groupMedianPercent)
+        ? Math.abs(result.medianPercent - groupMedianPercent)
+        : 0;
+    const groupMedianScale = Math.max(Math.abs(groupMedianPercent) * 0.004, 0.01);
+    const groupBackgroundChangeScore = clamp(
+      (groupMedianDelta - groupMedianScale) / Math.max(groupMedianScale * 3, 0.04),
       0,
       1
     );
+    const backgroundChangeScore = Math.max(localBackgroundChangeScore, groupBackgroundChangeScore * 0.65);
 
-    if (extremeStructureEvidence || (rangeStructureLikely && supportEvidence)) {
-      cloudScore = Math.max(cloudScore, 0.72);
-      if (supportEvidence) {
-        cloudScore = Math.max(cloudScore, 0.78);
-      }
-    } else if (rangeStructurePossible && supportEvidence) {
-      cloudScore = Math.max(cloudScore, 0.44);
-      if (supportEvidence) {
-        cloudScore = Math.max(cloudScore, 0.52);
-      }
-      if (strongSupportEvidence) {
-        cloudScore = Math.max(cloudScore, 0.62);
-      }
-    } else if (rangeStructurePossible) {
-      cloudScore = Math.min(cloudScore, cloudUnconfirmedStructureScoreCap);
-    }
+    const starDelta = Number.isFinite(result.starCount) ? Math.abs(result.starCount - groupStarMedian) : 0;
+    const starAnomalyScore =
+      hasRelativeStarReference
+        ? clamp((starDelta - groupStarScale) / Math.max(groupStarScale * 2, 1), 0, 1)
+        : 0;
+    const localNoiseValues = neighbours.map((item) => item.noise).filter((value) => Number.isFinite(value));
+    const localNoiseReference = finiteMedian(localNoiseValues);
+    const localNoiseDeviation = finiteMedian(localNoiseValues.map((value) => Math.abs(value - localNoiseReference)));
+    const localNoiseScale = Math.max(localNoiseDeviation * 1.4826, Math.abs(localNoiseReference) * 0.04, 0.1);
+    const noiseDelta = Number.isFinite(result.noise) && Number.isFinite(localNoiseReference)
+      ? Math.abs(result.noise - localNoiseReference)
+      : 0;
+    const noiseChangeScore = hasTemporalReference
+      ? clamp((noiseDelta - localNoiseScale) / Math.max(localNoiseScale * 2, 0.2), 0, 1)
+      : 0;
 
+    const temporalAnomalyScore = clamp(
+      tileResidualScore * 0.45 +
+        backgroundChangeScore * 0.25 +
+        starAnomalyScore * 0.2 +
+        noiseChangeScore * 0.1,
+      0,
+      1
+    );
+    const independentSupport = Math.max(backgroundChangeScore, starAnomalyScore, noiseChangeScore, medianLiftScore);
+    const multipleSignals = [
+      tileResidualScore >= 0.22,
+      backgroundChangeScore >= 0.28,
+      starAnomalyScore >= 0.28,
+      noiseChangeScore >= 0.28,
+      medianLiftScore >= 0.45
+    ].filter(Boolean).length;
+    const possibleCloud =
+      hasTemporalReference &&
+      temporalAnomalyScore >= 0.22 &&
+      (multipleSignals >= 2 || independentSupport >= 0.55);
+    const likelyCloud =
+      hasTemporalReference &&
+      temporalAnomalyScore >= 0.42 &&
+      (multipleSignals >= 2 || independentSupport >= 0.7);
+    let cloudScore = clamp(temporalAnomalyScore * 0.8 + medianLiftScore * 0.12 + starLossScore * 0.08, 0, 1);
     let cloudSeverity = "None";
-    if (
-      extremeStructureEvidence ||
-      (rangeStructureLikely && supportEvidence && strongSupportEvidence) ||
-      (rangeStructurePossible && strongSupportEvidence && (rangePercent >= 4.8 || structureScore >= 0.06))
-    ) {
+    if (likelyCloud) {
       cloudSeverity = "Likely";
-    } else if (rangeStructurePossible && supportEvidence) {
+      cloudScore = Math.max(cloudScore, 0.72);
+    } else if (possibleCloud) {
       cloudSeverity = "Possible";
+      cloudScore = Math.max(cloudScore, 0.52);
     }
 
     result.cloudSeverity = cloudSeverity;
     result.cloudScore = cloudScore;
     result.cloudStarLossScore = starLossScore;
     result.cloudMedianLiftScore = medianLiftScore;
+    result.cloudTileResidualScore = tileResidualScore;
+    result.cloudBackgroundChangeScore = backgroundChangeScore;
+    result.cloudStarAnomalyScore = starAnomalyScore;
+    result.cloudNoiseChangeScore = noiseChangeScore;
+    result.cloudTemporalAnomalyScore = temporalAnomalyScore;
     const relativeSummary =
       hasRelativeStarReference && hasRelativeBackgroundReference
         ? `${formatMetric(starLossScore * 100, 0)}% star loss, ${formatMetric(medianLiftScore * 100, 0)}% median-lift signal`
         : `single-frame structure check (${backgroundLevels.length}/${cloudRelativePeerMinimum} same-shot/filter frames)`;
-    const unconfirmedStructureSummary =
-      rangeStructurePossible && !supportEvidence
-        ? "No cloud warning; background structure lacks enough same-shot star-loss confirmation"
-        : "No cloud warning";
     result.cloudSummary =
       cloudSeverity === "None"
-        ? unconfirmedStructureSummary
-        : `${cloudSeverity} cloud: ${formatMetric(rangePercent, 1)}% background range, structure ${formatMetric(
-            structureScore,
+        ? `No cloud warning; transient anomaly ${formatMetric(temporalAnomalyScore, 2)}, ${relativeSummary}`
+        : `${cloudSeverity} cloud: transient anomaly ${formatMetric(temporalAnomalyScore, 2)}, tile residual ${formatMetric(
+            tileResidualScore,
             2
-          )}, ${relativeSummary}`;
+          )}, background change ${formatMetric(backgroundChangeScore, 2)}, star anomaly ${formatMetric(
+            starAnomalyScore,
+            2
+          )}`;
+    updateSkyCondition(result, {
+      structureScore: temporalAnomalyScore,
+      rangePercent: backgroundChangeScore * 100,
+      starLossScore,
+      medianLiftScore,
+      hasRelativeReference: hasRelativeStarReference && hasRelativeBackgroundReference
+    });
   }
 }
 
@@ -5185,6 +5768,70 @@ function applyCloudQualityPenalty(score, result) {
     return Math.min(score * 0.72, 0.55);
   }
   return score;
+}
+
+function resetMoonImpactPenalty(result) {
+  result.moonPenaltyApplied = false;
+  result.moonPenaltyFraction = 0;
+  result.moonPenaltyCap = 0;
+  result.moonConfirmedImpact = 0;
+  result.moonPenaltyReason = moonPenaltyEnabled() ? "No confirmed Moon impact" : "Disabled";
+}
+
+function moonImpactPenaltyCap(exposureScore) {
+  if (!Number.isFinite(exposureScore) || exposureScore < 22) return 0;
+  return getMoonPenaltyPercent() / 100;
+}
+
+function moonImpactPenaltyForResult(result) {
+  resetMoonImpactPenalty(result);
+  if (!moonPenaltyEnabled()) {
+    return 0;
+  }
+  if (result.cloudSeverity === "Possible" || result.cloudSeverity === "Likely") {
+    result.moonPenaltyReason = "Skipped because the cloud penalty already covers this frame";
+    return 0;
+  }
+
+  const exposureScore = Number(result.moonExposureScore);
+  const medianLiftScore = clamp(Number(result.cloudMedianLiftScore) || 0, 0, 1);
+  const structureScore = clamp(
+    Number.isFinite(Number(result.cloudTemporalAnomalyScore))
+      ? Number(result.cloudTemporalAnomalyScore)
+      : Number(result.cloudStructureScore) || 0,
+    0,
+    1
+  );
+  const starLossScore = clamp(Number(result.cloudStarLossScore) || 0, 0, 1);
+  const cap = moonImpactPenaltyCap(exposureScore);
+  result.moonPenaltyCap = cap;
+  if (cap === 0) {
+    result.moonPenaltyReason = Number.isFinite(exposureScore)
+      ? "Moon exposure is below the Moderate band"
+      : "Moon exposure is unavailable";
+    return 0;
+  }
+  if (medianLiftScore <= 0.15) {
+    result.moonPenaltyReason = "No meaningful smooth median background lift";
+    return 0;
+  }
+  if (structureScore >= cloudPossibleStructureScore || starLossScore >= cloudSupportStarLossScore) {
+    result.moonPenaltyReason = "Background is not smooth enough for a Moon-only penalty";
+    return 0;
+  }
+
+  const confirmedImpact = clamp((exposureScore / 100) * medianLiftScore, 0, 1);
+  const penaltyFraction = cap * confirmedImpact;
+  result.moonConfirmedImpact = confirmedImpact;
+  result.moonPenaltyFraction = penaltyFraction;
+  result.moonPenaltyApplied = penaltyFraction >= 0.002;
+  result.moonPenaltyReason = result.moonPenaltyApplied
+    ? `Moon exposure ${formatMetric(exposureScore, 0)}/100, smooth median-lift signal ${formatMetric(
+        medianLiftScore * 100,
+        0
+      )}%, user maximum ${formatMetric(cap * 100, 1)}%`
+    : "Confirmed Moon impact is too small to affect the rounded score";
+  return result.moonPenaltyApplied ? penaltyFraction : 0;
 }
 
 function computeFinalScoresForGroup(results) {
@@ -5266,6 +5913,13 @@ function computeFinalScoresForGroup(results) {
       penalties.push(scorePenalty("Clouds", before, score, cloudLabel(results[i])));
     }
 
+    const moonPenaltyFraction = moonImpactPenaltyForResult(results[i]);
+    if (moonPenaltyFraction > 0) {
+      const before = score;
+      score *= 1 - moonPenaltyFraction;
+      penalties.push(scorePenalty("Moon Impact", before, score, results[i].moonPenaltyReason));
+    }
+
     results[i].quality = Math.round(clamp(score, 0, 1) * 100);
     results[i].scoreBreakdown = {
       kind: "light",
@@ -5281,6 +5935,7 @@ function computeFinalScores(results) {
   const groups = new Map();
   const calibrationResults = [];
   assignLightObjectShotGroups(results);
+  updateMoonIllumination(results);
 
   for (const result of results) {
     if (isCalibrationFrame(result)) {
@@ -5358,6 +6013,10 @@ function trackingLabel(result) {
   return "OK";
 }
 
+function displayTrackingLabel(result) {
+  return translatedPhrase(trackingLabel(result));
+}
+
 function trackingSampleLabel(result) {
   const count = Number(result.trackingSampleStarCount);
   if (!Number.isFinite(count) || count <= 0) {
@@ -5378,6 +6037,10 @@ function haloLabel(result) {
   return "OK";
 }
 
+function displayHaloLabel(result) {
+  return translatedPhrase(haloLabel(result));
+}
+
 function cloudLabel(result) {
   if (result.cloudSeverity === "Likely") {
     return "Likely Cloud";
@@ -5386,6 +6049,10 @@ function cloudLabel(result) {
     return "Possible Cloud";
   }
   return "OK";
+}
+
+function displayCloudLabel(result) {
+  return translatedPhrase(cloudLabel(result));
 }
 
 function qualityClass(result) {
@@ -5514,42 +6181,226 @@ function formatObjectShotOffset(result) {
     : formatArcminutes(separation);
 }
 
+function clearMoonIllumination(result) {
+  result.moonIlluminationPercent = NaN;
+  result.moonPhaseCycle = NaN;
+  result.moonPhaseKey = "";
+  result.moonAgeDays = NaN;
+  result.moonCalculationMethod = "";
+  result.moonRightAscensionDegrees = NaN;
+  result.moonDeclinationDegrees = NaN;
+  result.moonAltitudeDegrees = NaN;
+  result.moonAzimuthDegrees = NaN;
+  result.moonTargetSeparationDegrees = NaN;
+  result.targetAltitudeDegrees = NaN;
+  result.moonExposureScore = NaN;
+  result.moonExposureKey = "unavailable";
+}
+
+function assignedSiteForFolder(folderName) {
+  const siteId = state.folderSiteAssignments[String(folderName || "")];
+  return state.savedSites.find((site) => site.id === siteId) || null;
+}
+
+function applyResolvedSite(result) {
+  if (result.siteFromHeader && Number.isFinite(result.siteLatitudeDegrees) && Number.isFinite(result.siteLongitudeDegrees)) {
+    const matchedSite = matchingSavedSiteForCoordinates(result.siteLatitudeDegrees, result.siteLongitudeDegrees);
+    result.siteName = matchedSite ? matchedSite.name : result.siteHeaderName || "";
+    return;
+  }
+  const site = assignedSiteForFolder(result.sourceFolder);
+  result.siteName = site ? site.name : "";
+  result.siteLatitudeDegrees = site ? site.latitudeDegrees : NaN;
+  result.siteLongitudeDegrees = site ? site.longitudeDegrees : NaN;
+  result.siteElevationMetres = site ? site.elevationMetres : NaN;
+  result.siteSource = site ? `Saved site for ${result.sourceFolder}` : "None";
+}
+
+function moonFilterSensitivity(filterName) {
+  const normalized = normalizeFilterName(filterName);
+  if (normalized === "Ha" || normalized === "SII") return 0.18;
+  if (normalized === "OIII") return 0.35;
+  if (normalized === "R" || normalized === "G" || normalized === "B") return 0.82;
+  return 1;
+}
+
+function moonExposureKey(score) {
+  if (!Number.isFinite(score)) return "unavailable";
+  if (score < 5) return "none";
+  if (score < 22) return "low";
+  if (score < 48) return "moderate";
+  if (score < 72) return "high";
+  return "veryHigh";
+}
+
+function calculateMoonExposure(result) {
+  if (
+    !Number.isFinite(result.moonIlluminationPercent) ||
+    !Number.isFinite(result.moonAltitudeDegrees) ||
+    !Number.isFinite(result.moonTargetSeparationDegrees)
+  ) {
+    return NaN;
+  }
+  if (result.moonAltitudeDegrees < -0.5) {
+    return 0;
+  }
+  const illuminationFactor = Math.pow(clamp(result.moonIlluminationPercent / 100, 0, 1), 0.82);
+  const altitudeFactor = clamp((result.moonAltitudeDegrees + 0.5) / 60, 0, 1);
+  const separationFactor = 0.18 + 0.82 * Math.exp(-result.moonTargetSeparationDegrees / 45);
+  const targetAltitudeFactor = Number.isFinite(result.targetAltitudeDegrees)
+    ? 0.85 + 0.15 * clamp((result.targetAltitudeDegrees + 5) / 55, 0, 1)
+    : 1;
+  return clamp(
+    100 * illuminationFactor * altitudeFactor * separationFactor * targetAltitudeFactor * moonFilterSensitivity(result.filterName),
+    0,
+    100
+  );
+}
+
+function assignObservationSessions(results) {
+  const lights = results
+    .filter((result) => result.frameType === "Light" && Number.isFinite(result.observationTimestampMs))
+    .sort((a, b) => a.observationTimestampMs - b.observationTimestampMs);
+  let sessionIndex = 0;
+  let previousTimestamp = NaN;
+  for (const result of lights) {
+    if (!Number.isFinite(previousTimestamp) || result.observationTimestampMs - previousTimestamp > observationSessionGapMs) {
+      sessionIndex += 1;
+    }
+    const date = new Date(result.observationTimestampMs).toISOString().slice(0, 10);
+    result.observationSessionKey = `session-${sessionIndex}-${date}`;
+    result.observationSessionLabel = `${date} UTC`;
+    previousTimestamp = result.observationTimestampMs;
+  }
+  for (const result of results) {
+    if (result.frameType === "Light" && !Number.isFinite(result.observationTimestampMs)) {
+      result.observationSessionKey = "session-unknown";
+      result.observationSessionLabel = t("moon.unknownSession");
+    }
+  }
+}
+
+function applyMoonIllumination(result) {
+  clearMoonIllumination(result);
+  if (
+    !result ||
+    result.frameType !== "Light" ||
+    !Number.isFinite(result.observationTimestampMs) ||
+    !window.AstroMoonCalculation
+  ) {
+    return;
+  }
+  const moon = window.AstroMoonCalculation.calculate(result.observationTimestampMs);
+  if (!moon) {
+    return;
+  }
+  result.moonIlluminationPercent = moon.illuminationPercent;
+  result.moonPhaseCycle = moon.phaseCycle;
+  result.moonPhaseKey = moon.phaseKey;
+  result.moonAgeDays = moon.lunarAgeDays;
+  result.moonCalculationMethod = moon.method;
+  result.moonRightAscensionDegrees = moon.rightAscensionDegrees;
+  result.moonDeclinationDegrees = moon.declinationDegrees;
+  if (Number.isFinite(result.raDegrees) && Number.isFinite(result.decDegrees)) {
+    result.moonTargetSeparationDegrees = window.AstroMoonCalculation.angularSeparationDegrees(
+      moon.rightAscensionDegrees,
+      moon.declinationDegrees,
+      result.raDegrees,
+      result.decDegrees
+    );
+  }
+  if (Number.isFinite(result.siteLatitudeDegrees) && Number.isFinite(result.siteLongitudeDegrees)) {
+    const moonHorizontal = window.AstroMoonCalculation.horizontalCoordinates(
+      result.observationTimestampMs,
+      moon.rightAscensionDegrees,
+      moon.declinationDegrees,
+      result.siteLatitudeDegrees,
+      result.siteLongitudeDegrees
+    );
+    const targetHorizontal = window.AstroMoonCalculation.horizontalCoordinates(
+      result.observationTimestampMs,
+      result.raDegrees,
+      result.decDegrees,
+      result.siteLatitudeDegrees,
+      result.siteLongitudeDegrees
+    );
+    result.moonAltitudeDegrees = moonHorizontal ? moonHorizontal.altitudeDegrees : NaN;
+    result.moonAzimuthDegrees = moonHorizontal ? moonHorizontal.azimuthDegrees : NaN;
+    result.targetAltitudeDegrees = targetHorizontal ? targetHorizontal.altitudeDegrees : NaN;
+  }
+  result.moonExposureScore = calculateMoonExposure(result);
+  result.moonExposureKey = moonExposureKey(result.moonExposureScore);
+}
+
+function updateMoonIllumination(results = state.results) {
+  assignObservationSessions(results);
+  for (const result of results) {
+    applyResolvedSite(result);
+    applyMoonIllumination(result);
+  }
+}
+
+function formatObservationUtc(result) {
+  if (!result || !Number.isFinite(result.observationTimestampMs)) {
+    return "-";
+  }
+  return new Date(result.observationTimestampMs).toISOString().replace("T", " ").replace(".000Z", " UTC").replace("Z", " UTC");
+}
+
+function moonPhaseLabel(result) {
+  return result && result.moonPhaseKey ? t(`moon.phase.${result.moonPhaseKey}`) : "-";
+}
+
+function moonPhaseCanonicalName(result) {
+  const names = {
+    new: "New Moon",
+    waxingCrescent: "Waxing Crescent",
+    firstQuarter: "First Quarter",
+    waxingGibbous: "Waxing Gibbous",
+    full: "Full Moon",
+    waningGibbous: "Waning Gibbous",
+    lastQuarter: "Last Quarter",
+    waningCrescent: "Waning Crescent"
+  };
+  return names[result && result.moonPhaseKey] || "";
+}
+
 function calibrationExposureMatchLabel(result) {
   if (result.frameType !== "Dark") {
-    return "n/a";
+    return t("common.notAvailable");
   }
   if (result.calibrationExposureMatch === "OK") {
-    return "OK";
+    return t("common.ok");
   }
   if (result.calibrationExposureMatch === "Mismatch") {
-    return "Review";
+    return t("common.review");
   }
   if (result.calibrationExposureMatch === "Severe mismatch") {
-    return "Issue";
+    return t("common.issue");
   }
-  return "n/a";
+  return t("common.notAvailable");
 }
 
 function calibrationTemperatureMatchLabel(result) {
   if (!isCalibrationFrame(result)) {
-    return "n/a";
+    return t("common.notAvailable");
   }
   if (result.calibrationTemperatureMatch === "OK") {
-    return "OK";
+    return t("common.ok");
   }
   if (result.calibrationTemperatureMatch === "Mismatch") {
-    return "Review";
+    return t("common.review");
   }
   if (result.calibrationTemperatureMatch === "Severe mismatch") {
-    return "Issue";
+    return t("common.issue");
   }
-  return "n/a";
+  return t("common.notAvailable");
 }
 
 function metricMarkup(label, value) {
   return `
     <div class="metric">
-      <span class="metric-label">${escapeHtml(String(label))}</span>
+      <span class="metric-label">${escapeHtml(displayMetricLabel(label))}</span>
       <span class="metric-value">${escapeHtml(String(value))}</span>
     </div>
   `;
@@ -5558,9 +6409,9 @@ function metricMarkup(label, value) {
 function metricItems(result) {
   if (isCalibrationFrame(result)) {
     const items = [
-      ["Type", result.frameType || unknownFrameTypeName],
-      ["Filter", result.filterName || unknownFilterName],
-      ["Status", calibrationLabel(result)],
+      ["Type", displayFrameType(result.frameType || unknownFrameTypeName)],
+      ["Filter", displayFilterName(result.filterName || unknownFilterName)],
+      ["Status", displayCalibrationLabel(result)],
       ["Level", `${formatMetric(result.medianPercent, 1)}%`],
       ["Spread", `${formatMetric(result.spreadPercent, 1)}%`],
       ["Noise", formatMetric(result.noise, 2)],
@@ -5576,23 +6427,32 @@ function metricItems(result) {
     ];
     if (result.frameType === "Flat") {
       items.push(
-        ["Artefact", flatArtifactLabel(result)],
+        ["Artefact", displayFlatArtifactLabel(result)],
         ["Hist Diff", formatMetric(result.flatHistogramDistance, 3)],
         ["Tile Diff", `${formatMetric(result.flatTileMismatchPercent, 1)}%`]
       );
     }
     if (result.frameType === "Dark" || result.frameType === "Dark Flat") {
-      items.push(["Sensor", result.sensorOutlierProfile || "Generic sensor"]);
+      items.push(["Sensor", result.sensorOutlierProfile || t("flat.genericSensor")]);
     }
     return items;
   }
 
   return [
-    ["Type", result.frameType || unknownFrameTypeName],
-    ["Filter", result.filterName || unknownFilterName],
-    ["Object", result.objectShotLabel || unknownObjectShotLabel],
+    ["Type", displayFrameType(result.frameType || unknownFrameTypeName)],
+    ["Filter", displayFilterName(result.filterName || unknownFilterName)],
+    ["Object", displayObjectShotLabel(result.objectShotLabel || unknownObjectShotLabel)],
     ["RA", formatRightAscensionHms(result.raDegrees)],
     ["DEC", formatDeclinationDms(result.decDegrees)],
+    ["UTC", formatObservationUtc(result)],
+    ["Moon Lit", Number.isFinite(result.moonIlluminationPercent) ? `${formatMetric(result.moonIlluminationPercent, 1)}%` : "-"],
+    ["Moon Phase", moonPhaseLabel(result)],
+    ["Moon Age", Number.isFinite(result.moonAgeDays) ? t("moon.ageValue", { age: formatMetric(result.moonAgeDays, 1) }) : "-"],
+    ["Site", result.siteName || (Number.isFinite(result.siteLatitudeDegrees) ? t("moon.headerSite") : "-")],
+    ["Moon Alt", Number.isFinite(result.moonAltitudeDegrees) ? `${formatMetric(result.moonAltitudeDegrees, 1)} deg` : "-"],
+    ["Moon Sep", Number.isFinite(result.moonTargetSeparationDegrees) ? `${formatMetric(result.moonTargetSeparationDegrees, 1)} deg` : "-"],
+    ["Moon Exposure", Number.isFinite(result.moonExposureScore) ? `${moonExposureLabel(result.moonExposureKey)} (${formatMetric(result.moonExposureScore, 0)})` : "-"],
+    ["Sky", skyConditionLabel(result.skyConditionKey)],
     ["Scale", formatPixelScale(result.pixelScaleArcsecPerPixel)],
     ["Focal", Number.isFinite(result.focalLengthMm) ? `${formatMetric(result.focalLengthMm, 0)} mm` : "-"],
     ["Pixel", formatMicrons(result.pixelSizeMicrons)],
@@ -5606,16 +6466,58 @@ function metricItems(result) {
     ["Mean", formatMetric(result.mean, 2)],
     ["Exp", formatExposure(result.exposureSeconds)],
     ["Temp", formatTemperature(result.cameraTemperatureC)],
-    ["Cloud", cloudLabel(result)],
+    ["Cloud", displayCloudLabel(result)],
     ["Clip", `${formatMetric(result.clipping, 4)}%`],
     ["Near Sat", `${formatMetric(result.nearSaturation, 4)}%`],
-    ["Tracking", trackingLabel(result)],
+    ["Tracking", displayTrackingLabel(result)],
     ["Guide Stars", trackingSampleLabel(result)]
   ];
 }
 
 function metricsMarkup(result) {
   return metricItems(result).map(([label, value]) => metricMarkup(label, value)).join("");
+}
+
+function zoomMetricItems(result) {
+  if (isCalibrationFrame(result)) {
+    const items = [
+      ["Status", `${result.quality} - ${displayCalibrationLabel(result)}`],
+      ["Type", displayFrameType(result.frameType || unknownFrameTypeName)],
+      ["Filter", displayFilterName(result.filterName || unknownFilterName)],
+      ["Level", `${formatMetric(result.medianPercent, 1)}%`],
+      ["Spread", `${formatMetric(result.spreadPercent, 1)}%`],
+      ["Noise", formatMetric(result.noise, 2)],
+      ["Exp Match", calibrationExposureMatchLabel(result)],
+      ["Temp Match", calibrationTemperatureMatchLabel(result)],
+      ["Hot Px", `${formatMetric(result.calibrationBrightOutlierPercent, 3)}%`],
+      ["Gradient", `${formatMetric(result.calibrationBackgroundRangePercent, 1)}%`]
+    ];
+    if (result.frameType === "Flat") {
+      items.push(["Artefact", displayFlatArtifactLabel(result)], ["Hist Diff", formatMetric(result.flatHistogramDistance, 3)]);
+    } else if (result.frameType === "Dark" || result.frameType === "Dark Flat") {
+      items.push(["Dark Px", `${formatMetric(result.calibrationDarkOutlierPercent, 3)}%`], ["Sensor", result.sensorOutlierProfile || t("flat.genericSensor")]);
+    }
+    return items;
+  }
+
+  return [
+    ["Status", `${result.quality} - ${displayRecommendation(recommendationFor(result))}`],
+    ["Filter", displayFilterName(result.filterName || unknownFilterName)],
+    ["Object", displayObjectShotLabel(result.objectShotLabel || unknownObjectShotLabel)],
+    ["Sharp", formatMetric(result.sharpness, 1)],
+    ["Noise", formatMetric(result.noise, 2)],
+    ["HFR", formatMetric(result.hfr, 2)],
+    ["Round", `${formatMetric(result.starRoundness * 100, 1)}%`],
+    ["Ecc", formatMetric(result.eccentricity, 3)],
+    ["Stars", String(result.starCount)],
+    ["Tracking", displayTrackingLabel(result)],
+    ["Cloud", displayCloudLabel(result)],
+    ["Clip", `${formatMetric(result.clipping, 4)}%`]
+  ];
+}
+
+function zoomMetricsMarkup(result) {
+  return zoomMetricItems(result).map(([label, value]) => metricMarkup(label, value)).join("");
 }
 
 function haloPreviewMarkup(result) {
@@ -5688,8 +6590,8 @@ function flatHistogramMarkup(result) {
   return `
     <span class="flat-histogram-overlay" aria-hidden="true">
       <span class="flat-histogram-header">
-        <span>Flat histogram</span>
-        <strong>Median ${escapeHtml(medianText)}</strong>
+        <span>${escapeHtml(t("calibration.flatHistogram"))}</span>
+        <strong>${escapeHtml(t("calibration.medianValue", { value: medianText }))}</strong>
       </span>
       <span class="flat-histogram-chart">
         <span class="flat-histogram-target"></span>
@@ -5706,14 +6608,14 @@ function warningItems(result) {
   const warnings = [];
   if (!isCalibrationFrame(result) && (result.cloudSeverity === "Possible" || result.cloudSeverity === "Likely")) {
     warnings.push({
-      label: cloudLabel(result),
-      detail: result.cloudSummary || "Cloud or haze detected"
+      label: displayCloudLabel(result),
+      detail: result.cloudSummary ? translatedPhrase(result.cloudSummary) : t("warning.cloudFallback")
     });
   }
   if (!isCalibrationFrame(result) && (result.haloSeverity === "Possible" || result.haloSeverity === "Likely")) {
     warnings.push({
-      label: haloLabel(result),
-      detail: result.haloSummary || "Bright-star halo detected"
+      label: displayHaloLabel(result),
+      detail: result.haloSummary ? translatedPhrase(result.haloSummary) : t("warning.haloFallback")
     });
   }
   return warnings;
@@ -5726,7 +6628,7 @@ function warningMarkup(result) {
   }
 
   return `
-    <div class="warning-list" aria-label="Frame warnings">
+    <div class="warning-list" aria-label="${escapeHtml(t("warning.frameWarnings"))}">
       ${warnings
         .map(
           (warning) => `
@@ -5758,8 +6660,8 @@ function scoreBreakdownRow(item, className = "") {
   return `
     <div class="score-breakdown-row ${className}">
       <div>
-        <span class="score-breakdown-label">${escapeHtml(item.label)}</span>
-        ${item.detail ? `<span class="score-breakdown-detail">${escapeHtml(item.detail)}</span>` : ""}
+        <span class="score-breakdown-label">${escapeHtml(translatedPhrase(item.label))}</span>
+        ${item.detail ? `<span class="score-breakdown-detail">${escapeHtml(translatedPhrase(item.detail))}</span>` : ""}
       </div>
       <div class="score-bar" aria-hidden="true">
         <span class="score-fill" style="width: ${fillWidth}"></span>
@@ -5776,15 +6678,15 @@ function scoreBreakdownMarkup(result) {
   }
   const componentRows = (breakdown.components || []).map((item) => scoreBreakdownRow(item)).join("");
   const penaltyRows = (breakdown.penalties || []).map((item) => scoreBreakdownRow(item, "score-breakdown-penalty")).join("");
-  const penaltyText = penaltyRows || `<p class="score-breakdown-empty">No score penalties applied.</p>`;
+  const penaltyText = penaltyRows || `<p class="score-breakdown-empty">${escapeHtml(t("score.noPenalties"))}</p>`;
 
   return `
     <details class="score-details">
-      <summary>Why this score?</summary>
+      <summary>${escapeHtml(t("score.why"))}</summary>
       <div class="score-breakdown">
         <div class="score-breakdown-total">
-          <span>Base ${formatMetric(breakdown.base, 1)}</span>
-          <span>Final ${formatMetric(breakdown.final, 0)}</span>
+          <span>${escapeHtml(t("score.base", { value: formatMetric(breakdown.base, 1) }))}</span>
+          <span>${escapeHtml(t("score.final", { value: formatMetric(breakdown.final, 0) }))}</span>
         </div>
         ${componentRows}
         ${penaltyText}
@@ -5798,15 +6700,15 @@ function filterTabLabel(stat) {
 }
 
 function thresholdFilterLabel(filterName) {
-  return filterName === unknownFilterName ? "Unknown filter" : `${filterName} filter`;
+  return filterName === unknownFilterName ? t("common.unknownFilter") : t("filter.named", { name: filterName });
 }
 
 function thresholdFilterDetail(stat) {
-  const frameText = `${stat.count} ${stat.count === 1 ? "frame" : "frames"}`;
+  const frameText = stat.count === 1 ? t("filter.framesOne") : t("filter.framesMany", { count: stat.count });
   if (stat.filterName === unknownFilterName) {
-    return `${frameText} - no filter found in FITS header or path`;
+    return t("filter.noMetadata", { frames: frameText });
   }
-  return `${frameText} in this filter group`;
+  return t("filter.groupDetail", { frames: frameText });
 }
 
 function renderFilterPanel() {
@@ -5873,11 +6775,11 @@ function renderFilterPanel() {
   const typeTotal = state.results.length;
   const allTypeActive = state.activeFrameType === allFrameTypesKey ? " active" : "";
   frameTypeTabs.innerHTML = `
-    <button class="filter-tab${allTypeActive}" type="button" role="tab" aria-selected="${state.activeFrameType === allFrameTypesKey}" data-frame-type="${allFrameTypesKey}">All ${typeTotal}</button>
+    <button class="filter-tab${allTypeActive}" type="button" role="tab" aria-selected="${state.activeFrameType === allFrameTypesKey}" data-frame-type="${allFrameTypesKey}">${escapeHtml(t("common.all"))} ${typeTotal}</button>
     ${typeStats
       .map((stat) => {
         const active = state.activeFrameType === stat.frameType ? " active" : "";
-        return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeFrameType === stat.frameType}" data-frame-type="${escapeHtml(stat.frameType)}">${escapeHtml(stat.frameType)} ${stat.count}</button>`;
+        return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeFrameType === stat.frameType}" data-frame-type="${escapeHtml(stat.frameType)}">${escapeHtml(displayFrameType(stat.frameType))} ${stat.count}</button>`;
       })
       .join("")}
   `;
@@ -5885,11 +6787,11 @@ function renderFilterPanel() {
   const total = typeResults.length;
   const allActive = state.activeFilter === allFiltersKey ? " active" : "";
   filterTabs.innerHTML = `
-    <button class="filter-tab${allActive}" type="button" role="tab" aria-selected="${state.activeFilter === allFiltersKey}" data-filter="${allFiltersKey}">All ${total}</button>
+    <button class="filter-tab${allActive}" type="button" role="tab" aria-selected="${state.activeFilter === allFiltersKey}" data-filter="${allFiltersKey}">${escapeHtml(t("common.all"))} ${total}</button>
     ${stats
       .map((stat) => {
         const active = state.activeFilter === stat.filterName ? " active" : "";
-        return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeFilter === stat.filterName}" data-filter="${escapeHtml(stat.filterName)}">${escapeHtml(filterTabLabel(stat))}</button>`;
+        return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeFilter === stat.filterName}" data-filter="${escapeHtml(stat.filterName)}">${escapeHtml(displayFilterName(stat.filterName))} ${stat.count}</button>`;
       })
       .join("")}
   `;
@@ -5902,11 +6804,11 @@ function renderFilterPanel() {
     const objectTotal = objectStats.reduce((sum, stat) => sum + stat.count, 0);
     const allObjectActive = state.activeObjectShot === allObjectShotsKey ? " active" : "";
     objectShotTabs.innerHTML = `
-      <button class="filter-tab${allObjectActive}" type="button" role="tab" aria-selected="${state.activeObjectShot === allObjectShotsKey}" data-object-shot="${allObjectShotsKey}">All ${objectTotal}</button>
+      <button class="filter-tab${allObjectActive}" type="button" role="tab" aria-selected="${state.activeObjectShot === allObjectShotsKey}" data-object-shot="${allObjectShotsKey}">${escapeHtml(t("common.all"))} ${objectTotal}</button>
       ${objectStats
         .map((stat) => {
           const active = state.activeObjectShot === stat.objectShotKey ? " active" : "";
-          return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeObjectShot === stat.objectShotKey}" data-object-shot="${escapeHtml(stat.objectShotKey)}">${escapeHtml(stat.label)} ${stat.count}</button>`;
+          return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeObjectShot === stat.objectShotKey}" data-object-shot="${escapeHtml(stat.objectShotKey)}">${escapeHtml(displayObjectShotLabel(stat.label))} ${stat.count}</button>`;
         })
         .join("")}
     `;
@@ -5916,36 +6818,36 @@ function renderFilterPanel() {
   const recommendationTotal = recommendationResults.length;
   const allRecommendationActive = state.activeRecommendation === allRecommendationsKey ? " active" : "";
   recommendationTabs.innerHTML = `
-    <button class="filter-tab${allRecommendationActive}" type="button" role="tab" aria-selected="${state.activeRecommendation === allRecommendationsKey}" data-recommendation="${allRecommendationsKey}">All ${recommendationTotal}</button>
+    <button class="filter-tab${allRecommendationActive}" type="button" role="tab" aria-selected="${state.activeRecommendation === allRecommendationsKey}" data-recommendation="${allRecommendationsKey}">${escapeHtml(t("common.all"))} ${recommendationTotal}</button>
     ${recommendationStats(recommendationResults)
       .map((stat) => {
         const active = state.activeRecommendation === stat.recommendation ? " active" : "";
-        return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeRecommendation === stat.recommendation}" data-recommendation="${escapeHtml(stat.recommendation)}">${escapeHtml(stat.recommendation)} ${stat.count}</button>`;
+        return `<button class="filter-tab${active}" type="button" role="tab" aria-selected="${state.activeRecommendation === stat.recommendation}" data-recommendation="${escapeHtml(stat.recommendation)}">${escapeHtml(displayRecommendation(stat.recommendation))} ${stat.count}</button>`;
       })
       .join("")}
   `;
 
   const mixedTypeText =
-    typeStats.length > 1 ? "Mixed frame types detected. Calibration frames use calibration checks." : "";
+    typeStats.length > 1 ? t("filter.mixedTypes") : "";
   const hasLightFrames = typeResults.some((result) => !isCalibrationFrame(result));
   const hasCalibrationFrames = typeResults.some((result) => isCalibrationFrame(result));
   const mixedFilterText =
     stats.length > 1
       ? hasLightFrames && hasCalibrationFrames
-        ? "Light scores and calibration sets are grouped by filter."
+        ? t("filter.mixedLightCalibration")
         : hasCalibrationFrames
-          ? "Calibration sets are grouped by filter where useful."
-          : "Scores are grouped by filter for fair comparison."
+          ? t("filter.mixedCalibration")
+          : t("filter.mixedScores")
       : "";
   const mixedObjectText =
     objectStats.filter((stat) => stat.objectShotKey !== unknownObjectShotKey).length > 1
-      ? "Light scores are also grouped by object shot from FITS RA/DEC."
+      ? t("filter.mixedObjects")
       : "";
   filterWarning.textContent = [mixedTypeText, mixedFilterText, mixedObjectText].filter(Boolean).join(" ");
 
   const thresholdStats = filterStats(typeResults.filter((result) => !isCalibrationFrame(result)));
   if (thresholdStats.length === 0) {
-    filterThresholds.innerHTML = `<p class="threshold-note">Calibration frames use type-specific checks for their purpose.</p>`;
+    filterThresholds.innerHTML = `<p class="threshold-note">${escapeHtml(t("filter.calibrationThresholdNote"))}</p>`;
     return;
   }
 
@@ -5961,7 +6863,7 @@ function renderFilterPanel() {
             <span class="threshold-detail">${escapeHtml(detail)}</span>
           </span>
           <span class="threshold-entry">
-            <input class="threshold-number" type="number" min="0" max="100" step="1" value="${threshold}" data-filter="${escapeHtml(stat.filterName)}" aria-label="${escapeHtml(label)} keeper threshold">
+            <input class="threshold-number" type="number" min="0" max="100" step="1" value="${threshold}" data-filter="${escapeHtml(stat.filterName)}" aria-label="${escapeHtml(t("filter.thresholdAria", { filter: label }))}">
             <span>%</span>
           </span>
         </label>
@@ -6064,12 +6966,12 @@ function calibrationGroupSummaries(results = state.results) {
 
 function compatibilitySetSummaryLabel(issues, checked) {
   if (issues > 0) {
-    return `${issues} issue${issues === 1 ? "" : "s"}`;
+    return `${issues} ${t("common.issue")}`;
   }
   if (checked > 0) {
-    return "OK";
+    return t("common.ok");
   }
-  return "n/a";
+  return t("common.notAvailable");
 }
 
 function renderCalibrationReport() {
@@ -6090,8 +6992,8 @@ function renderCalibrationReport() {
   calibrationReport.innerHTML = `
     <div class="calibration-report-header">
       <div>
-        <p class="section-label">Calibration Report</p>
-        <p class="calibration-report-note">${totalFrames} calibration frame(s) across ${summaries.length} set(s). ${issueSets} set(s) need review.</p>
+        <p class="section-label">${escapeHtml(t("calibration.report"))}</p>
+        <p class="calibration-report-note">${escapeHtml(t("calibration.reportNote", { frames: totalFrames, sets: summaries.length, issues: issueSets }))}</p>
       </div>
     </div>
     <div class="calibration-report-grid">
@@ -6102,29 +7004,29 @@ function renderCalibrationReport() {
               <div class="calibration-set-heading">
                 <div>
                   <p class="calibration-set-title">${escapeHtml(item.label)}</p>
-                  <p class="calibration-set-subtitle">${item.count >= 3 ? "Set consistency checked" : "Set consistency needs 3+ frames"}</p>
+                  <p class="calibration-set-subtitle">${escapeHtml(item.count >= 3 ? t("calibration.consistencyChecked") : t("calibration.consistencyNeeds"))}</p>
                 </div>
-                <span class="quality-pill ${item.status === "OK" ? "quality-high" : item.status === "Review" ? "quality-mid" : "quality-low"}">${item.status}</span>
+                <span class="quality-pill ${item.status === "OK" ? "quality-high" : item.status === "Review" ? "quality-mid" : "quality-low"}">${escapeHtml(item.status === "OK" ? t("common.ok") : item.status === "Review" ? t("common.review") : t("common.issue"))}</span>
               </div>
               <div class="calibration-set-metrics">
-                <div class="calibration-set-metric"><span>Frames</span><strong>${item.count}</strong></div>
-                <div class="calibration-set-metric"><span>Median</span><strong>${formatMetric(item.setMedian, 1)}%</strong></div>
-                <div class="calibration-set-metric"><span>Range</span><strong>${formatMetric(item.setRange, 1)}%</strong></div>
-                <div class="calibration-set-metric"><span>Quality</span><strong>${formatMetric(item.qualityMedian, 0)}</strong></div>
-                <div class="calibration-set-metric"><span>Outliers</span><strong>${item.outliers}</strong></div>
-                <div class="calibration-set-metric"><span>Keep</span><strong>${item.keep}/${item.review}/${item.discard}</strong></div>
-                <div class="calibration-set-metric"><span>Exp Match</span><strong>${compatibilitySetSummaryLabel(item.exposureIssues, item.exposureChecked)}</strong></div>
-                <div class="calibration-set-metric"><span>Temp Match</span><strong>${compatibilitySetSummaryLabel(item.temperatureIssues, item.temperatureChecked)}</strong></div>
-                <div class="calibration-set-metric"><span>Hot Px</span><strong>${formatMetric(item.maxHotPixels, 3)}%</strong></div>
-                <div class="calibration-set-metric"><span>Gradient</span><strong>${formatMetric(item.maxGradient, 1)}%</strong></div>
-                <div class="calibration-set-metric"><span>Artefacts</span><strong>${item.flatArtifactIssues || 0}</strong></div>
-                <div class="calibration-set-metric"><span>Warnings</span><strong>${item.warnings.length}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.frames"))}</span><strong>${item.count}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.median"))}</span><strong>${formatMetric(item.setMedian, 1)}%</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.range"))}</span><strong>${formatMetric(item.setRange, 1)}%</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.quality"))}</span><strong>${formatMetric(item.qualityMedian, 0)}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.outliers"))}</span><strong>${item.outliers}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.keep"))}</span><strong>${item.keep}/${item.review}/${item.discard}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("metric.expMatch"))}</span><strong>${compatibilitySetSummaryLabel(item.exposureIssues, item.exposureChecked)}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("metric.tempMatch"))}</span><strong>${compatibilitySetSummaryLabel(item.temperatureIssues, item.temperatureChecked)}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("metric.hotPx"))}</span><strong>${formatMetric(item.maxHotPixels, 3)}%</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("metric.gradient"))}</span><strong>${formatMetric(item.maxGradient, 1)}%</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.artefacts"))}</span><strong>${item.flatArtifactIssues || 0}</strong></div>
+                <div class="calibration-set-metric"><span>${escapeHtml(t("calibration.warnings"))}</span><strong>${item.warnings.length}</strong></div>
               </div>
               <div class="calibration-set-warnings">
                 ${
                   item.warnings.length > 0
-                    ? item.warnings.map((warning) => `<span class="calibration-set-warning">${escapeHtml(warning)}</span>`).join("")
-                    : `<span class="calibration-set-warning">No calibration warnings</span>`
+                    ? item.warnings.map((warning) => `<span class="calibration-set-warning">${escapeHtml(translatedPhrase(warning))}</span>`).join("")
+                    : `<span class="calibration-set-warning">${escapeHtml(t("calibration.noWarnings"))}</span>`
                 }
               </div>
             </article>
@@ -6147,19 +7049,19 @@ function renderResults(results = visibleResults()) {
     card.className = `result-card${selectedClass}`;
     card.innerHTML = `
       <div class="result-visual">
-        <label class="card-select" title="Select image">
-          <input class="row-check" type="checkbox" data-key="${escapeHtml(key)}" ${checked} aria-label="Select ${escapeHtml(result.fileName)}">
+        <label class="card-select" title="${escapeHtml(t("zoom.selectImage"))}">
+          <input class="row-check" type="checkbox" data-key="${escapeHtml(key)}" ${checked} aria-label="${escapeHtml(t("zoom.selectFile", { name: result.fileName }))}">
         </label>
-        <button class="preview-button" type="button" data-key="${escapeHtml(key)}" aria-label="Open preview for ${escapeHtml(result.fileName)}">
-          <img class="preview" src="${result.thumbnail}" alt="Preview for ${escapeHtml(result.fileName)}">
+        <button class="preview-button" type="button" data-key="${escapeHtml(key)}" aria-label="${escapeHtml(t("zoom.openPreview", { name: result.fileName }))}">
+          <img class="preview" src="${result.thumbnail}" alt="${escapeHtml(t("zoom.previewAlt", { name: result.fileName }))}">
           ${haloPreviewMarkup(result)}
           ${flatHistogramMarkup(result)}
         </button>
         <div class="image-badges">
-          <span class="type-pill">${escapeHtml(result.frameType || unknownFrameTypeName)}</span>
-          <span class="filter-pill">${escapeHtml(result.filterName || unknownFilterName)}</span>
+          <span class="type-pill">${escapeHtml(displayFrameType(result.frameType || unknownFrameTypeName))}</span>
+          <span class="filter-pill">${escapeHtml(displayFilterName(result.filterName || unknownFilterName))}</span>
           <span class="quality-pill ${qualityClass(result)}">${result.quality}</span>
-          <span class="recommendation-pill">${recommendation}</span>
+          <span class="recommendation-pill">${escapeHtml(displayRecommendation(recommendation))}</span>
         </div>
       </div>
       <div class="result-analysis">
@@ -6250,11 +7152,19 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
   if (star) {
     const trailText =
       Number.isFinite(star.trailAxisRatio) && star.trailAxisRatio > 1.25
-        ? `, trail ratio ${formatMetric(star.trailAxisRatio, 2)}`
+        ? t("zoom.trailRatio", { value: formatMetric(star.trailAxisRatio, 2) })
         : "";
-    const cornerText = star.cornerIssue ? ", corner shape warning" : "";
-    const borderlineText = star.borderline && !star.cornerIssue ? ", borderline shape" : "";
-    zoomStatus.textContent = `Star HFR ${formatMetric(star.hfr, 2)} px, FWHM ${formatMetric(star.minorFwhm, 2)} / ${formatMetric(star.majorFwhm, 2)} px, roundness ${formatMetric(star.roundness * 100, 1)}%${trailText}${cornerText}${borderlineText}`;
+    const cornerText = star.cornerIssue ? t("zoom.cornerWarning") : "";
+    const borderlineText = star.borderline && !star.cornerIssue ? t("zoom.borderline") : "";
+    zoomStatus.textContent = t("zoom.starStatus", {
+      hfr: formatMetric(star.hfr, 2),
+      minor: formatMetric(star.minorFwhm, 2),
+      major: formatMetric(star.majorFwhm, 2),
+      roundness: formatMetric(star.roundness * 100, 1),
+      trail: trailText,
+      corner: cornerText,
+      borderline: borderlineText
+    });
     return;
   }
   if (fallbackStatus) {
@@ -6270,14 +7180,15 @@ function updateZoomStatus(result = activeZoomResult(), fallbackStatus = "") {
     Number.isFinite(result.zoomLensDetailWidth) &&
     Number.isFinite(result.zoomLensDetailHeight)
   ) {
-    zoomStatus.textContent = `Grid preview; magnifier detail ${Math.round(result.zoomLensDetailWidth)} x ${Math.round(
-      result.zoomLensDetailHeight
-    )} px`;
+    zoomStatus.textContent = t("zoom.gridDetail", {
+      width: Math.round(result.zoomLensDetailWidth),
+      height: Math.round(result.zoomLensDetailHeight)
+    });
     return;
   }
   zoomStatus.textContent = state.magnifierActive
-    ? "Grid preview; move over the image to prepare magnifier detail"
-    : "Grid preview; enable Magnifier for high-resolution inspection";
+    ? t("zoom.prepareDetail")
+    : t("zoom.enableMagnifier");
 }
 
 function clearZoomStarOverlay() {
@@ -6302,8 +7213,8 @@ function updateStarOverlayButton() {
   zoomStarOverlayBtn.classList.toggle("active", supported && state.starOverlayActive);
   zoomStarOverlayBtn.setAttribute("aria-pressed", String(supported && state.starOverlayActive));
   zoomStarOverlayBtn.title = supported
-    ? "Show guide and reference stars"
-    : "Star overlay is only available for light frames";
+    ? t("zoom.showStars")
+    : t("zoom.lightOnlyStars");
 }
 
 function drawZoomStarOverlay() {
@@ -6473,7 +7384,7 @@ function updateZoomContent(result) {
   zoomTitle.textContent = result.fileName;
   zoomImage.src = result.thumbnail;
   zoomImage.alt = `Zoomed preview for ${result.fileName}`;
-  zoomMetrics.innerHTML = metricsMarkup(result);
+  zoomMetrics.innerHTML = zoomMetricsMarkup(result);
   updateZoomStatus(result);
   updateZoomLensBackground();
   scheduleZoomStarOverlayDraw();
@@ -6718,7 +7629,7 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
   let processed = 0;
   let lastStatusAt = 0;
 
-  setTransientStatus(`Refreshing stretched previews... 0/${total}`);
+  setTransientStatus(t("status.refreshingPreviews", { done: 0, total }));
 
   for (let index = 0; index < results.length; index += chunkSize) {
     if (runId !== state.previewRefreshRunId) {
@@ -6738,7 +7649,7 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
 
     const now = Date.now();
     if (now - lastStatusAt > 250 || processed >= total) {
-      setTransientStatus(`Refreshing stretched previews... ${processed}/${total}`);
+      setTransientStatus(t("status.refreshingPreviews", { done: processed, total }));
       lastStatusAt = now;
     }
 
@@ -6763,12 +7674,12 @@ async function refreshCurrentPreviews(doneText = "Preview stretch refreshed.") {
   setSummaryMessage(doneText);
 }
 
-function schedulePreviewRefresh(delay = 260, doneText = "Preview stretch refreshed.") {
+function schedulePreviewRefresh(delay = 260, doneText = t("status.previewRefreshed")) {
   cancelPreviewRefresh();
   state.previewRefreshTimer = window.setTimeout(() => {
     state.previewRefreshTimer = null;
     refreshCurrentPreviews(doneText).catch(() => {
-      setSummaryMessage("Preview refresh failed.");
+      setSummaryMessage(t("status.previewFailed"));
     });
   }, delay);
 }
@@ -6790,8 +7701,8 @@ function updateSummary(results, totalFiles, unsupportedFiles) {
   const runNote = state.lastAnalysisRunNote ? `${state.lastAnalysisRunNote} ` : "";
 
   if (results.length === 0) {
-    const ignoredText = unsupportedFiles > 0 ? ` Ignored ${unsupportedFiles} non-frame/system file(s).` : "";
-    state.analysisSummaryText = `${runNote}Processed 0 astronomy frames.${ignoredText}`;
+    const ignoredText = unsupportedFiles > 0 ? t("summary.ignored", { count: unsupportedFiles }) : "";
+    state.analysisSummaryText = `${runNote}${t("summary.processedZero", { ignored: ignoredText })}`;
     setSummaryMessage();
     return;
   }
@@ -6814,28 +7725,434 @@ function updateSummary(results, totalFiles, unsupportedFiles) {
   const cloudWarnings = results.filter(
     (result) => !isCalibrationFrame(result) && (result.cloudSeverity === "Possible" || result.cloudSeverity === "Likely")
   ).length;
-  const sharpnessModeLabel = getSharpnessMode() === "fwhm" ? "FWHM only" : "Hybrid";
+  const sharpnessModeLabel = getSharpnessMode() === "fwhm" ? t("controls.fwhmOnly") : t("controls.hybrid");
   const analysisModeText = analysisModeSummary(results);
-  const haloPenaltyText = haloPenaltyEnabled() ? "on" : "off";
-  const typeText = frameTypeStats(results).map((stat) => `${stat.frameType}: ${stat.count}`).join(", ");
+  const haloPenaltyText = haloPenaltyEnabled() ? t("common.on") : t("common.off");
+  const moonPenaltyText = moonPenaltyEnabled()
+    ? t("summary.moonPenaltyMaximum", { value: formatMetric(getMoonPenaltyPercent(), 1) })
+    : t("common.off");
+  const typeText = frameTypeStats(results).map((stat) => `${displayFrameType(stat.frameType)}: ${stat.count}`).join(", ");
   const stats = filterStats(results);
-  const filterText = stats.map((stat) => `${stat.filterName}: ${stat.count}`).join(", ");
+  const filterText = stats.map((stat) => `${displayFilterName(stat.filterName)}: ${stat.count}`).join(", ");
   const objectStats = objectShotStats(results);
   const showObjectSummary =
     objectStats.some((stat) => stat.objectShotKey !== unknownObjectShotKey) || objectStats.length > 1;
   const objectText =
-    showObjectSummary ? ` Object shots: ${objectStats.map((stat) => `${stat.label}: ${stat.count}`).join(", ")}.` : "";
-  const mixedFilterText = stats.length > 1 ? " Scores are normalised within each filter." : "";
+    showObjectSummary
+      ? t("summary.objectShots", {
+          objects: objectStats.map((stat) => `${displayObjectShotLabel(stat.label)}: ${stat.count}`).join(", ")
+        })
+      : "";
+  const mixedFilterText = stats.length > 1 ? t("summary.normalisedFilters") : "";
   const mixedObjectText =
     objectStats.filter((stat) => stat.objectShotKey !== unknownObjectShotKey).length > 1
-      ? " Light scores are normalised within each object shot."
+      ? t("summary.normalisedObjects")
       : "";
-  const ignoredText = unsupportedFiles > 0 ? ` Ignored ${unsupportedFiles} non-frame/system file(s).` : "";
-  state.analysisSummaryText = `${runNote}Processed ${results.length} astronomy frame(s).${ignoredText} Types: ${typeText}. Filters: ${filterText}.${objectText} Keep: ${keepers}, Review: ${review}, Discard: ${discard}. Tracking alerts: ${trackingAlerts} (repeat-drift: ${repeatDriftAlerts}). Cloud warnings: ${cloudWarnings}. Halo warnings: ${haloWarnings}. Halo penalty: ${haloPenaltyText}. Sharpness mode: ${sharpnessModeLabel}. Analysis mode: ${analysisModeText}.${mixedFilterText}${mixedObjectText}`;
+  const ignoredText = unsupportedFiles > 0 ? t("summary.ignored", { count: unsupportedFiles }) : "";
+  state.analysisSummaryText = t("summary.full", {
+    runNote,
+    count: results.length,
+    ignored: ignoredText,
+    types: typeText,
+    filters: filterText,
+    objects: objectText,
+    keep: keepers,
+    review,
+    discard,
+    tracking: trackingAlerts,
+    repeat: repeatDriftAlerts,
+    clouds: cloudWarnings,
+    halos: haloWarnings,
+    haloPenalty: haloPenaltyText,
+    moonPenalty: moonPenaltyText,
+    sharpnessMode: sharpnessModeLabel,
+    analysisMode: analysisModeText,
+    filterNote: mixedFilterText,
+    objectNote: mixedObjectText
+  });
   setSummaryMessage();
 }
 
+function drawMoonPhaseDisc(canvas, phaseCycle) {
+  if (!canvas || !Number.isFinite(phaseCycle)) {
+    return;
+  }
+  const cssSize = Math.max(64, Math.round(canvas.getBoundingClientRect().width || 88));
+  const pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  const size = Math.round(cssSize * pixelRatio);
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(size, size);
+  const centre = (size - 1) / 2;
+  const radius = size * 0.44;
+  const angle = phaseCycle * Math.PI * 2;
+  const sunX = Math.sin(angle);
+  const sunZ = -Math.cos(angle);
+
+  for (let y = 0; y < size; y += 1) {
+    const normalY = (centre - y) / radius;
+    for (let x = 0; x < size; x += 1) {
+      const normalX = (x - centre) / radius;
+      const radiusSquared = normalX * normalX + normalY * normalY;
+      const offset = (y * size + x) * 4;
+      if (radiusSquared > 1) {
+        continue;
+      }
+      const normalZ = Math.sqrt(Math.max(0, 1 - radiusSquared));
+      const illumination = normalX * sunX + normalZ * sunZ;
+      const limbShade = 0.78 + normalZ * 0.22;
+      const lit = illumination > 0;
+      const colour = lit ? Math.round(235 * limbShade) : Math.round(22 * limbShade);
+      image.data[offset] = lit ? colour + 10 : colour;
+      image.data[offset + 1] = lit ? colour + 8 : colour + 4;
+      image.data[offset + 2] = lit ? colour : colour + 12;
+      image.data[offset + 3] = 255;
+    }
+  }
+  context.putImageData(image, 0, 0);
+  context.beginPath();
+  context.arc(centre, centre, radius, 0, Math.PI * 2);
+  context.strokeStyle = "#64748b";
+  context.lineWidth = Math.max(1, pixelRatio);
+  context.stroke();
+}
+
+function moonExposureLabel(key) {
+  return t(`moon.exposure.${key || "unavailable"}`);
+}
+
+function skyConditionLabel(key) {
+  return t(`moon.sky.${key || "indeterminate"}`);
+}
+
+function moonContextGroups(results) {
+  const groups = new Map();
+  for (const result of results) {
+    const siteKey = Number.isFinite(result.siteLatitudeDegrees)
+      ? `${formatMetric(result.siteLatitudeDegrees, 4)},${formatMetric(result.siteLongitudeDegrees, 4)}`
+      : `missing:${result.sourceFolder || ""}`;
+    const key = [
+      result.observationSessionKey || "session-unknown",
+      result.objectShotKey || unknownObjectShotKey,
+      result.filterName || unknownFilterName,
+      siteKey
+    ].join("|");
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key).push(result);
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    const aTime = Math.min(...a.map((item) => item.observationTimestampMs).filter(Number.isFinite));
+    const bTime = Math.min(...b.map((item) => item.observationTimestampMs).filter(Number.isFinite));
+    return (Number.isFinite(aTime) ? aTime : Infinity) - (Number.isFinite(bTime) ? bTime : Infinity);
+  });
+}
+
+function finiteMedian(values) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  return sorted.length > 0 ? percentileFromSorted(sorted, 0.5) : NaN;
+}
+
+function detectedHeaderSites(results = state.results) {
+  const sites = [];
+  for (const result of results) {
+    if (
+      result.frameType !== "Light" ||
+      !result.siteFromHeader ||
+      !Number.isFinite(result.siteLatitudeDegrees) ||
+      !Number.isFinite(result.siteLongitudeDegrees)
+    ) {
+      continue;
+    }
+    let site = sites.find(
+      (candidate) =>
+        siteCoordinateDistanceDegrees(
+          result.siteLatitudeDegrees,
+          result.siteLongitudeDegrees,
+          candidate.latitudeDegrees,
+          candidate.longitudeDegrees
+        ) <= savedSiteMatchToleranceDegrees
+    );
+    if (!site) {
+      site = {
+        latitudeDegrees: result.siteLatitudeDegrees,
+        longitudeDegrees: result.siteLongitudeDegrees,
+        elevationMetres: result.siteElevationMetres,
+        frameCount: 0,
+        folders: new Set()
+      };
+      sites.push(site);
+    } else if (!Number.isFinite(site.elevationMetres) && Number.isFinite(result.siteElevationMetres)) {
+      site.elevationMetres = result.siteElevationMetres;
+    }
+    site.frameCount += 1;
+    if (result.sourceFolder) {
+      site.folders.add(result.sourceFolder);
+    }
+  }
+  return sites.sort(
+    (a, b) => a.latitudeDegrees - b.latitudeDegrees || a.longitudeDegrees - b.longitudeDegrees
+  );
+}
+
+function renderDetectedHeaderSites() {
+  if (!moonDetectedSites) {
+    return;
+  }
+  const sites = detectedHeaderSites();
+  if (sites.length === 0) {
+    moonDetectedSites.innerHTML = "";
+    return;
+  }
+  const rows = sites
+    .map((site) => {
+      const savedSite = matchingSavedSiteForCoordinates(site.latitudeDegrees, site.longitudeDegrees);
+      const coordinates = `${formatMetric(site.latitudeDegrees, 6)}, ${formatMetric(site.longitudeDegrees, 6)}`;
+      const elevation = Number.isFinite(site.elevationMetres)
+        ? ` - ${formatMetric(site.elevationMetres, 0)} m`
+        : "";
+      const folderText = Array.from(site.folders).join(", ") || "-";
+      return `<form class="moon-detected-site-row" data-detected-latitude="${escapeHtml(
+        String(site.latitudeDegrees)
+      )}" data-detected-longitude="${escapeHtml(String(site.longitudeDegrees))}" data-detected-elevation="${escapeHtml(
+        Number.isFinite(site.elevationMetres) ? String(site.elevationMetres) : ""
+      )}"><span class="moon-detected-site-coordinates"><strong>${escapeHtml(`${coordinates}${elevation}`)}</strong><small>${escapeHtml(
+        t("moon.detectedFrames", { count: site.frameCount, folders: folderText })
+      )}</small></span><input type="text" maxlength="64" required value="${escapeHtml(
+        savedSite ? savedSite.name : ""
+      )}" placeholder="${escapeHtml(t("moon.detectedSiteName"))}" aria-label="${escapeHtml(
+        t("moon.detectedSiteNameAria", { coordinates })
+      )}"><button type="submit">${escapeHtml(
+        t(savedSite ? "moon.updateDetectedSite" : "moon.saveDetectedSite")
+      )}</button></form>`;
+    })
+    .join("");
+  moonDetectedSites.innerHTML = `<div class="moon-detected-sites-header"><p class="section-label">${escapeHtml(
+    t("moon.detectedLocations")
+  )}</p><p class="moon-site-note">${escapeHtml(t("moon.detectedLocationNote"))}</p></div><div class="moon-detected-site-list">${rows}</div>`;
+}
+
+function formatSessionTimeRange(results) {
+  const times = results.map((result) => result.observationTimestampMs).filter(Number.isFinite).sort((a, b) => a - b);
+  if (times.length === 0) {
+    return t("moon.timeUnavailable");
+  }
+  const startIso = new Date(times[0]).toISOString();
+  const endIso = new Date(times[times.length - 1]).toISOString();
+  const start = startIso.replace("T", " ").slice(0, 16);
+  const end = endIso.replace("T", " ").slice(0, 16);
+  if (start === end) {
+    return `${start} UTC`;
+  }
+  return startIso.slice(0, 10) === endIso.slice(0, 10)
+    ? `${start} - ${end.slice(11)} UTC`
+    : `${start} - ${end} UTC`;
+}
+
+function representativeSkyCondition(results) {
+  const priority = { moonlitHaze: 6, cloudLikely: 5, brightening: 4, moonlightLikely: 3, indeterminate: 2, clear: 1 };
+  return results.reduce(
+    (selected, result) => (priority[result.skyConditionKey] > priority[selected.skyConditionKey] ? result : selected),
+    results[0]
+  );
+}
+
+function renderFolderSiteAssignments() {
+  if (!moonFolderSites) {
+    return;
+  }
+  const folderNames = Array.from(
+    new Set([
+      ...state.selectedFolders.map((folder) => folder.displayPath),
+      ...state.results.map((result) => result.sourceFolder).filter(Boolean)
+    ])
+  );
+  if (folderNames.length === 0) {
+    moonFolderSites.innerHTML = "";
+    return;
+  }
+  const options = state.savedSites
+    .map(
+      (site) =>
+        `<option value="${escapeHtml(site.id)}">${escapeHtml(site.name)} (${formatMetric(site.latitudeDegrees, 3)}, ${formatMetric(
+          site.longitudeDegrees,
+          3
+        )})</option>`
+    )
+    .join("");
+  moonFolderSites.innerHTML = folderNames
+    .map((folderName) => {
+      const selectedId = state.folderSiteAssignments[folderName] || "";
+      return `<label class="moon-folder-site-row"><span>${escapeHtml(folderName)}</span><select data-folder-site="${escapeHtml(
+        folderName
+      )}" aria-label="${escapeHtml(t("moon.folderSiteAria", { folder: folderName }))}"><option value="">${escapeHtml(
+        t("moon.headerOrUnassigned")
+      )}</option>${options}</select></label>`;
+    })
+    .join("");
+  for (const select of moonFolderSites.querySelectorAll("select[data-folder-site]")) {
+    select.value = state.folderSiteAssignments[select.dataset.folderSite] || "";
+  }
+}
+
+function renderMoonIlluminationPanel() {
+  if (!moonIlluminationPanel || !moonSessionList) {
+    return;
+  }
+  const lightResults = resultsForActiveObjectShot().filter((result) => result.frameType === "Light");
+  if (lightResults.length === 0 && state.results.every((result) => result.frameType !== "Light")) {
+    moonIlluminationPanel.hidden = true;
+    return;
+  }
+
+  moonIlluminationPanel.hidden = false;
+  renderDetectedHeaderSites();
+  renderFolderSiteAssignments();
+  if (
+    moonSiteManager &&
+    !state.siteManagerAutoOpened &&
+    lightResults.some(
+      (result) => !Number.isFinite(result.siteLatitudeDegrees) || !Number.isFinite(result.siteLongitudeDegrees)
+    )
+  ) {
+    moonSiteManager.open = true;
+    state.siteManagerAutoOpened = true;
+  }
+  if (lightResults.length === 0) {
+    moonSessionList.innerHTML = `<p class="moon-site-note">${escapeHtml(t("moon.noMatchingContext"))}</p>`;
+    return;
+  }
+
+  const groups = moonContextGroups(lightResults);
+  moonSessionList.innerHTML = groups
+    .map((group, index) => {
+      const contexts = group
+        .filter((result) => Number.isFinite(result.moonIlluminationPercent) && Number.isFinite(result.moonPhaseCycle))
+        .sort((a, b) => a.observationTimestampMs - b.observationTimestampMs);
+      const representative = contexts[Math.floor(contexts.length / 2)] || group[0];
+      const illuminationValues = contexts.map((result) => result.moonIlluminationPercent);
+      const minimum = illuminationValues.length > 0 ? Math.min(...illuminationValues) : NaN;
+      const maximum = illuminationValues.length > 0 ? Math.max(...illuminationValues) : NaN;
+      const illuminationText = Number.isFinite(minimum)
+        ? Math.round(minimum) === Math.round(maximum)
+          ? t("moon.illuminated", { value: formatMetric(minimum, 0) })
+          : t("moon.illuminatedRange", { minimum: formatMetric(minimum, 0), maximum: formatMetric(maximum, 0) })
+        : t("moon.unavailableTitle");
+      const exposureScore = finiteMedian(group.map((result) => result.moonExposureScore));
+      const exposureKey = moonExposureKey(exposureScore);
+      const skyResult = representativeSkyCondition(group);
+      const siteText = Number.isFinite(representative.siteLatitudeDegrees)
+        ? `${representative.siteName || t("moon.headerSite")} (${formatMetric(representative.siteLatitudeDegrees, 3)}, ${formatMetric(
+            representative.siteLongitudeDegrees,
+            3
+          )})`
+        : t("moon.siteMissing");
+      const geometry = Number.isFinite(representative.moonAltitudeDegrees)
+        ? t("moon.geometry", {
+            altitude: formatMetric(finiteMedian(group.map((result) => result.moonAltitudeDegrees)), 0),
+            separation: formatMetric(finiteMedian(group.map((result) => result.moonTargetSeparationDegrees)), 0)
+          })
+        : Number.isFinite(representative.moonTargetSeparationDegrees)
+          ? t("moon.separationOnly", {
+              separation: formatMetric(finiteMedian(group.map((result) => result.moonTargetSeparationDegrees)), 0)
+            })
+          : t("moon.geometryUnavailable");
+      const title = `${displayObjectShotLabel(representative.objectShotLabel)} - ${displayFilterName(representative.filterName)}`;
+      const diagnosisText = t("moon.skyDetail." + (skyResult.skyConditionKey || "indeterminate"), {
+        confidence: t("moon.confidence." + (skyResult.skyConditionConfidence || "low")),
+        exposure: Number.isFinite(exposureScore) ? formatMetric(exposureScore, 0) : "-",
+        structure: formatMetric(skyResult.cloudStructureScore, 2),
+        stars: formatMetric((Number(skyResult.cloudStarLossScore) || 0) * 100, 0)
+      });
+      return `<article class="moon-session-card"><canvas class="moon-phase-canvas" data-moon-canvas="${index}" width="64" height="64" aria-label="${escapeHtml(
+        t("moon.phaseAria", { phase: moonPhaseLabel(representative) })
+      )}"></canvas><div><p class="moon-session-title">${escapeHtml(title)}</p><p class="moon-session-line">${escapeHtml(
+        `${formatSessionTimeRange(group)} - ${t("moon.frames", { count: group.length })}`
+      )}</p><p class="moon-session-line">${escapeHtml(`${siteText} - ${illuminationText} - ${geometry}`)}</p><div class="moon-session-badges"><span class="moon-context-badge" data-level="${escapeHtml(
+        exposureKey
+      )}">${escapeHtml(t("moon.exposureBadge", { label: moonExposureLabel(exposureKey), score: Number.isFinite(exposureScore) ? formatMetric(exposureScore, 0) : "-" }))}</span><span class="moon-context-badge" data-sky="${escapeHtml(
+        skyResult.skyConditionKey
+      )}">${escapeHtml(skyConditionLabel(skyResult.skyConditionKey))}</span></div><p class="moon-session-diagnosis">${escapeHtml(
+        diagnosisText
+      )}</p></div></article>`;
+    })
+    .join("");
+
+  groups.forEach((group, index) => {
+    const validContexts = group
+      .filter((result) => Number.isFinite(result.moonPhaseCycle))
+      .sort((a, b) => a.observationTimestampMs - b.observationTimestampMs);
+    const representative = validContexts[Math.floor(validContexts.length / 2)];
+    const canvas = moonSessionList.querySelector(`[data-moon-canvas="${index}"]`);
+    if (canvas && representative) {
+      drawMoonPhaseDisc(canvas, representative.moonPhaseCycle);
+    } else if (canvas) {
+      canvas.hidden = true;
+    }
+  });
+}
+
+function refreshMoonContextFromSites() {
+  saveSettings();
+  if (state.results.length > 0) {
+    computeFinalScores(state.results);
+    state.results.sort((a, b) => b.quality - a.quality);
+    renderAnalysisView();
+  } else {
+    renderMoonIlluminationPanel();
+  }
+}
+
+function saveSiteFromForm(event) {
+  event.preventDefault();
+  const name = String(moonSiteName ? moonSiteName.value : "").trim();
+  const latitudeDegrees = Number(moonSiteLatitude ? moonSiteLatitude.value : NaN);
+  const longitudeDegrees = Number(moonSiteLongitude ? moonSiteLongitude.value : NaN);
+  const elevationValue = String(moonSiteElevation ? moonSiteElevation.value : "").trim();
+  const elevationMetres = elevationValue === "" ? NaN : Number(elevationValue);
+  if (!name || !Number.isFinite(latitudeDegrees) || !Number.isFinite(longitudeDegrees)) {
+    return;
+  }
+  if (Math.abs(latitudeDegrees) > 90 || Math.abs(longitudeDegrees) > 180) {
+    return;
+  }
+  if (!saveNamedSite(name, latitudeDegrees, longitudeDegrees, elevationMetres)) {
+    return;
+  }
+  if (moonSiteForm) {
+    moonSiteForm.reset();
+  }
+  refreshMoonContextFromSites();
+  if (moonSiteManager) {
+    moonSiteManager.open = true;
+  }
+}
+
+function saveDetectedSiteFromForm(event) {
+  const form = event.target instanceof Element ? event.target.closest("form[data-detected-latitude]") : null;
+  if (!form) {
+    return;
+  }
+  event.preventDefault();
+  const input = form.querySelector('input[type="text"]');
+  const name = String(input ? input.value : "").trim();
+  const latitudeDegrees = Number(form.dataset.detectedLatitude);
+  const longitudeDegrees = Number(form.dataset.detectedLongitude);
+  const elevationText = String(form.dataset.detectedElevation || "");
+  const elevationMetres = elevationText === "" ? NaN : Number(elevationText);
+  if (!saveNamedSite(name, latitudeDegrees, longitudeDegrees, elevationMetres)) {
+    return;
+  }
+  refreshMoonContextFromSites();
+  if (moonSiteManager) {
+    moonSiteManager.open = true;
+  }
+}
+
 function renderAnalysisView() {
+  renderMoonIlluminationPanel();
   renderFilterPanel();
   renderCalibrationReport();
   renderResults(visibleResults());
@@ -7292,6 +8609,20 @@ function addXisfPropertyAlias(header, id, value) {
   if (compact.includes("exposuretime") || last === "exposure") {
     setXisfHeaderAlias(header, "EXPTIME", value);
   }
+  if (
+    compact.includes("observationtime") ||
+    compact.includes("observationdate") ||
+    compact.includes("acquisitiontime") ||
+    compact.includes("acquisitiondate")
+  ) {
+    if (compact.includes("end")) {
+      setXisfHeaderAlias(header, "DATE-END", value);
+    } else if (compact.includes("average") || compact.includes("mid")) {
+      setXisfHeaderAlias(header, "DATE-AVG", value);
+    } else {
+      setXisfHeaderAlias(header, "DATE-OBS", value);
+    }
+  }
   if (compact.includes("binning")) {
     setXisfHeaderAlias(header, "BINNING", value);
   }
@@ -7309,6 +8640,15 @@ function addXisfPropertyAlias(header, id, value) {
   }
   if ((hasSegment("frame") || hasSegment("image")) && (last === "type" || last === "kind")) {
     setXisfHeaderAlias(header, "IMAGETYP", value);
+  }
+  if (compact.includes("sitelatitude") || compact.includes("observatorylatitude") || compact === "geographiclatitude") {
+    setXisfHeaderAlias(header, "SITELAT", value);
+  }
+  if (compact.includes("sitelongitude") || compact.includes("observatorylongitude") || compact === "geographiclongitude") {
+    setXisfHeaderAlias(header, "SITELONG", value);
+  }
+  if (compact.includes("siteelevation") || compact.includes("observatoryelevation") || compact.includes("sitealtitude")) {
+    setXisfHeaderAlias(header, "SITEELEV", value);
   }
 }
 
@@ -7605,10 +8945,13 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
   const frameTypeInfo = options.frameTypeInfo || detectFrameTypeForFile(file, header);
   const isCalibration = calibrationFrameTypes.has(frameTypeInfo.name);
   const exposureInfo = options.exposureInfo || detectExposureForFile(file, header);
+  const observationTimeInfo =
+    options.observationTimeInfo || detectObservationTimeForFile(file, header, exposureInfo.value);
   const temperatureInfo = options.temperatureInfo || detectTemperatureForFile(file, header);
   const cameraInfo = options.cameraInfo || detectCameraModelForFile(file, header);
   const targetInfo = options.targetInfo || detectTargetNameForFile(file, header);
   const coordinateInfo = options.coordinateInfo || detectCoordinatesForFile(file, header);
+  const siteInfo = options.siteInfo || detectObservingSiteForFile(file, header);
   const focalLengthInfo = options.focalLengthInfo || detectFocalLengthForFile(file, header);
   const pixelSizeInfo = options.pixelSizeInfo || detectPixelSizeForFile(file, header);
   const binningInfo = options.binningInfo || detectBinningForFile(file, header);
@@ -7683,6 +9026,7 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
   const result = {
     calculationVersion: appVersion,
     fileName: displayFilePath(file) || file.name,
+    sourceFolder: (displayFilePath(file) || file.name).split("/").filter(Boolean)[0] || "Selected folder",
     fileKey: fileIdentityKey(file),
     sourceFile: file,
     analysisMode,
@@ -7693,6 +9037,40 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     frameTypeSource: frameTypeInfo.source || "None",
     exposureSeconds: exposureInfo.value,
     exposureSource: exposureInfo.source || "None",
+    observationTimeUtc: observationTimeInfo.iso || "",
+    observationTimestampMs: observationTimeInfo.timestampMs,
+    observationTimeSource: observationTimeInfo.source || "None",
+    moonIlluminationPercent: NaN,
+    moonPhaseCycle: NaN,
+    moonPhaseKey: "",
+    moonAgeDays: NaN,
+    moonCalculationMethod: "",
+    moonRightAscensionDegrees: NaN,
+    moonDeclinationDegrees: NaN,
+    moonAltitudeDegrees: NaN,
+    moonAzimuthDegrees: NaN,
+    moonTargetSeparationDegrees: NaN,
+    targetAltitudeDegrees: NaN,
+    moonExposureScore: NaN,
+    moonExposureKey: "unavailable",
+    observationSessionKey: "",
+    observationSessionLabel: "",
+    skyConditionKey: "indeterminate",
+    skyConditionConfidence: "low",
+    skyConditionSummary: "",
+    observedBackgroundImpactScore: 0,
+    moonPenaltyApplied: false,
+    moonPenaltyFraction: 0,
+    moonPenaltyCap: 0,
+    moonConfirmedImpact: 0,
+    moonPenaltyReason: "Disabled",
+    siteName: siteInfo.name || "",
+    siteHeaderName: siteInfo.name || "",
+    siteLatitudeDegrees: siteInfo.latitudeDegrees,
+    siteLongitudeDegrees: siteInfo.longitudeDegrees,
+    siteElevationMetres: siteInfo.elevationMetres,
+    siteSource: siteInfo.source || "None",
+    siteFromHeader: Number.isFinite(siteInfo.latitudeDegrees) && Number.isFinite(siteInfo.longitudeDegrees),
     cameraTemperatureC: temperatureInfo.value,
     temperatureSource: temperatureInfo.source || "None",
     cameraModel: cameraInfo.value || unknownCameraModelName,
@@ -7794,8 +9172,14 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     cloudSeverity: "None",
     cloudScore: 0,
     cloudStructureScore: cloudMetrics.cloudStructureScore,
+    cloudTileSignature: cloudMetrics.tileSignature || [],
     cloudStarLossScore: 0,
     cloudMedianLiftScore: 0,
+    cloudTileResidualScore: 0,
+    cloudBackgroundChangeScore: 0,
+    cloudStarAnomalyScore: 0,
+    cloudNoiseChangeScore: 0,
+    cloudTemporalAnomalyScore: 0,
     cloudBackgroundRangePercent: cloudMetrics.cloudBackgroundRangePercent,
     cloudBackgroundRange: cloudMetrics.cloudBackgroundRange,
     cloudStripRangePercent: cloudMetrics.cloudStripRangePercent,
@@ -8177,6 +9561,15 @@ function analysisWorkerFunctionSource() {
     parseDeclinationDegrees,
     detectCoordinatesFromHeader,
     detectCoordinatesForFile,
+    parseSiteCoordinate,
+    detectObservingSiteFromHeader,
+    detectObservingSiteForFile,
+    parseObservationDateValue,
+    julianDateToTimestamp,
+    modifiedJulianDateToTimestamp,
+    firstObservationTimeFromHeader,
+    detectObservationTimeFromPath,
+    detectObservationTimeForFile,
     averageFinite,
     detectFocalLengthForFile,
     detectPixelSizeForFile,
@@ -8287,7 +9680,18 @@ const exposureHeaderKeys = ${JSON.stringify(exposureHeaderKeys)};
 const temperatureHeaderKeys = ${JSON.stringify(temperatureHeaderKeys)};
 const cameraModelHeaderKeys = ${JSON.stringify(cameraModelHeaderKeys)};
 const targetNameHeaderKeys = ${JSON.stringify(targetNameHeaderKeys)};
+const observationAverageTimeHeaderKeys = ${JSON.stringify(observationAverageTimeHeaderKeys)};
+const observationStartTimeHeaderKeys = ${JSON.stringify(observationStartTimeHeaderKeys)};
+const observationEndTimeHeaderKeys = ${JSON.stringify(observationEndTimeHeaderKeys)};
+const observationAverageMjdHeaderKeys = ${JSON.stringify(observationAverageMjdHeaderKeys)};
+const observationStartMjdHeaderKeys = ${JSON.stringify(observationStartMjdHeaderKeys)};
+const observationEndMjdHeaderKeys = ${JSON.stringify(observationEndMjdHeaderKeys)};
+const observationAverageJdHeaderKeys = ${JSON.stringify(observationAverageJdHeaderKeys)};
+const observationStartJdHeaderKeys = ${JSON.stringify(observationStartJdHeaderKeys)};
+const observationEndJdHeaderKeys = ${JSON.stringify(observationEndJdHeaderKeys)};
 const coordinateHeaderPairs = ${JSON.stringify(coordinateHeaderPairs)};
+const siteCoordinateHeaderPairs = ${JSON.stringify(siteCoordinateHeaderPairs)};
+const siteElevationHeaderKeys = ${JSON.stringify(siteElevationHeaderKeys)};
 const focalLengthHeaderKeys = ${JSON.stringify(focalLengthHeaderKeys)};
 const pixelSizeHeaderKeyPairs = ${JSON.stringify(pixelSizeHeaderKeyPairs)};
 const pixelSizeHeaderKeys = ${JSON.stringify(pixelSizeHeaderKeys)};
@@ -8557,6 +9961,7 @@ function workerPoolSizeForMode(analysisMode, filesOrCount) {
 
 function attachCompletedAnalysisResult(result, file) {
   result.sourceFile = file;
+  applyMoonIllumination(result);
   refreshResultThumbnail(result);
   return result;
 }
@@ -8578,6 +9983,7 @@ async function analyzeFilesSequentially(files, analysisMode, analysisConfig, pro
     progress.activeCount = 1;
     try {
       const metrics = await analyzeImageFile(file, analysisMode, analysisConfig);
+      applyMoonIllumination(metrics);
       newResults.push(metrics);
     } catch (error) {
       failures += 1;
@@ -8902,15 +10308,15 @@ async function chooseOutputDirectory() {
       state.outputDirectoryHandle = null;
       setOutputLabel();
       updateSelectionControls();
-      setSummaryMessage("Output folder selected.");
+      setSummaryMessage(t("status.outputSelected"));
     } catch (error) {
-      setSummaryMessage("Could not open output folder picker.");
+      setSummaryMessage(t("status.outputPickerFailed"));
     }
     return;
   }
 
   if (!hasDirectoryPicker()) {
-    setSummaryMessage("Output folder copy is not supported in this browser.");
+    setSummaryMessage(t("status.outputUnsupported"));
     return;
   }
 
@@ -8919,10 +10325,10 @@ async function chooseOutputDirectory() {
     state.outputDirectoryHandle = handle;
     setOutputLabel();
     updateSelectionControls();
-    setSummaryMessage("Output folder selected.");
+    setSummaryMessage(t("status.outputSelected"));
   } catch (error) {
     if (error && error.name !== "AbortError") {
-      setSummaryMessage("Could not open output folder picker.");
+      setSummaryMessage(t("status.outputPickerFailed"));
     }
   }
 }
@@ -8945,13 +10351,13 @@ function clearSelection() {
 
 async function sendSelectedImages() {
   if (!hasOutputFolderSelected()) {
-    setSummaryMessage("Choose an output folder first.");
+    setSummaryMessage(t("status.chooseOutput"));
     return;
   }
 
   const resultsToSend = selectedResults();
   if (resultsToSend.length === 0) {
-    setSummaryMessage("Select at least one image to send.");
+    setSummaryMessage(t("status.selectImage"));
     return;
   }
 
@@ -8972,17 +10378,20 @@ async function sendSelectedImages() {
     } catch (error) {
       failed += 1;
     }
-    setTransientStatus(`Sending selected images... ${i + 1}/${resultsToSend.length}`);
+    setTransientStatus(t("status.sending", { done: i + 1, total: resultsToSend.length }));
   }
 
   updateSelectionControls();
   const folderText = [
-    copyByTypeCheckbox && copyByTypeCheckbox.checked ? "type" : "",
-    copyByFilterCheckbox && copyByFilterCheckbox.checked ? "filter" : ""
+    copyByTypeCheckbox && copyByTypeCheckbox.checked ? t("status.typeFolder") : "",
+    copyByFilterCheckbox && copyByFilterCheckbox.checked ? t("status.filterFolder") : ""
   ].filter(Boolean);
-  const folderMessage = folderText.length > 0 ? ` using ${folderText.join(" and ")} folders` : "";
+  const folderMessage =
+    folderText.length > 0
+      ? t("status.usingFolders", { folders: folderText.join(t("status.and")) })
+      : "";
   const outputName = isDesktopApp() ? state.outputDirectoryName : state.outputDirectoryHandle.name;
-  setSummaryMessage(`Sent ${copied} image(s) to "${outputName}"${folderMessage}. Failed: ${failed}.`);
+  setSummaryMessage(t("status.sent", { copied, name: outputName, folders: folderMessage, failed }));
 }
 
 function exportCsv() {
@@ -9019,6 +10428,39 @@ function exportCsv() {
     "dec_degrees",
     "dec_dms",
     "dec_source",
+    "observation_time_utc",
+    "observation_time_source",
+    "observation_session",
+    "source_folder",
+    "site_name",
+    "site_latitude_degrees",
+    "site_longitude_degrees",
+    "site_elevation_metres",
+    "site_source",
+    "moon_illumination_percent",
+    "moon_phase",
+    "moon_age_days",
+    "moon_ra_degrees",
+    "moon_dec_degrees",
+    "moon_altitude_degrees",
+    "moon_azimuth_degrees",
+    "moon_target_separation_degrees",
+    "target_altitude_degrees",
+    "moon_exposure_score",
+    "moon_exposure_level",
+    "moon_calculation_method",
+    "moon_score_effect",
+    "moon_penalty_enabled",
+    "moon_penalty_setting_percent",
+    "moon_penalty_applied",
+    "moon_penalty_cap_percent",
+    "moon_confirmed_impact",
+    "moon_penalty_fraction",
+    "moon_penalty_reason",
+    "sky_condition",
+    "sky_condition_confidence",
+    "sky_condition_summary",
+    "observed_background_impact_score",
     "focal_length_mm",
     "focal_length_source",
     "pixel_size_microns",
@@ -9075,6 +10517,11 @@ function exportCsv() {
     "cloud_structure_score",
     "cloud_star_loss_score",
     "cloud_median_lift_score",
+    "cloud_tile_residual_score",
+    "cloud_background_change_score",
+    "cloud_star_anomaly_score",
+    "cloud_noise_change_score",
+    "cloud_temporal_anomaly_score",
     "cloud_background_range_percent",
     "cloud_summary",
     "halo_warning",
@@ -9138,6 +10585,39 @@ function exportCsv() {
       formatMetric(result.decDegrees, 6),
       formatDeclinationDms(result.decDegrees),
       result.decSource || "None",
+      result.observationTimeUtc || "",
+      result.observationTimeSource || "None",
+      result.frameType === "Light" ? result.observationSessionLabel || "" : "skipped",
+      result.sourceFolder || "",
+      result.siteName || "",
+      formatMetric(result.siteLatitudeDegrees, 6),
+      formatMetric(result.siteLongitudeDegrees, 6),
+      formatMetric(result.siteElevationMetres, 2),
+      result.siteSource || "None",
+      result.frameType === "Light" ? formatMetric(result.moonIlluminationPercent, 3) : "skipped",
+      result.frameType === "Light" ? moonPhaseCanonicalName(result) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonAgeDays, 3) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonRightAscensionDegrees, 6) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonDeclinationDegrees, 6) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonAltitudeDegrees, 4) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonAzimuthDegrees, 4) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonTargetSeparationDegrees, 4) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.targetAltitudeDegrees, 4) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonExposureScore, 3) : "skipped",
+      result.frameType === "Light" ? result.moonExposureKey || "unavailable" : "skipped",
+      result.frameType === "Light" ? result.moonCalculationMethod || "" : "skipped",
+      result.frameType === "Light" ? (result.moonPenaltyApplied ? "optional penalty applied" : "none") : "skipped",
+      result.frameType === "Light" ? (moonPenaltyEnabled() ? "yes" : "no") : "skipped",
+      result.frameType === "Light" ? formatMetric(getMoonPenaltyPercent(), 3) : "skipped",
+      result.frameType === "Light" ? (result.moonPenaltyApplied ? "yes" : "no") : "skipped",
+      result.frameType === "Light" ? formatMetric((Number(result.moonPenaltyCap) || 0) * 100, 3) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonConfirmedImpact, 5) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonPenaltyFraction, 5) : "skipped",
+      result.frameType === "Light" ? result.moonPenaltyReason || "" : "skipped",
+      result.frameType === "Light" ? result.skyConditionKey || "indeterminate" : "skipped",
+      result.frameType === "Light" ? result.skyConditionConfidence || "low" : "skipped",
+      result.frameType === "Light" ? result.skyConditionSummary || "" : "skipped",
+      result.frameType === "Light" ? formatMetric(result.observedBackgroundImpactScore, 4) : "skipped",
       formatMetric(result.focalLengthMm, 3),
       result.focalLengthSource || "None",
       formatMetric(result.pixelSizeMicrons, 4),
@@ -9194,6 +10674,11 @@ function exportCsv() {
       formatMetric(result.cloudStructureScore, 4),
       formatMetric(result.cloudStarLossScore, 4),
       formatMetric(result.cloudMedianLiftScore, 4),
+      formatMetric(result.cloudTileResidualScore, 4),
+      formatMetric(result.cloudBackgroundChangeScore, 4),
+      formatMetric(result.cloudStarAnomalyScore, 4),
+      formatMetric(result.cloudNoiseChangeScore, 4),
+      formatMetric(result.cloudTemporalAnomalyScore, 4),
       formatMetric(result.cloudBackgroundRangePercent, 3),
       result.cloudSummary || "",
       lightOnlyText(haloLabel(result)),
@@ -9237,7 +10722,7 @@ function exportCsv() {
 async function analyzeSelectedFiles() {
   const files = state.selectedFiles.slice();
   if (files.length === 0) {
-    setTransientStatus("Select one or more folders with images first.");
+    setTransientStatus(t("status.selectFolders"));
     return;
   }
 
@@ -9262,13 +10747,14 @@ async function analyzeSelectedFiles() {
     state.activeFilter = allFiltersKey;
     state.activeObjectShot = allObjectShotsKey;
     state.activeRecommendation = allRecommendationsKey;
+    renderMoonIlluminationPanel();
     renderFilterPanel();
     exportBtn.disabled = true;
     const ignoredCount = ignoredBeforeFailures;
     state.analysisSummaryText =
       ignoredCount > 0
-        ? `No supported astronomy frames found. Ignored ${ignoredCount} non-frame/system file(s).`
-        : "No supported astronomy frames found.";
+        ? t("status.noSupportedIgnored", { count: ignoredCount })
+        : t("status.noSupported");
     state.lastAnalysisRunNote = "";
     setSummaryMessage();
     updateSelectAllState();
@@ -9277,7 +10763,8 @@ async function analyzeSelectedFiles() {
   }
 
   if (pending.length === 0 && state.results.length > 0) {
-    state.lastAnalysisRunNote = "No new supported frames to analyse; refreshed existing scores.";
+    state.lastAnalysisRunNote = t("status.noNewFrames");
+    updateMoonIllumination(state.results);
     computeFinalScores(state.results);
     state.results.sort((a, b) => b.quality - a.quality);
     pruneSelectedKeysToResults();
@@ -9305,14 +10792,19 @@ async function analyzeSelectedFiles() {
     renderAnalysisProgress(
       analysisProgress,
       analysisOutcome.stopped
-        ? `Elapsed: ${formatTimerSeconds((Date.now() - analysisProgress.startedAt) / 1000)}. Analysis stopped. Finalizing completed frames...`
-        : `Elapsed: ${formatTimerSeconds((Date.now() - analysisProgress.startedAt) / 1000)}. Remaining: 0s. Finalizing results...`
+        ? t("progress.stoppedFinalising", {
+            elapsed: formatTimerSeconds((Date.now() - analysisProgress.startedAt) / 1000)
+          })
+        : t("progress.finalising", {
+            elapsed: formatTimerSeconds((Date.now() - analysisProgress.startedAt) / 1000)
+          })
     );
 
     const completedKeys = new Set(newResults.map((result) => getResultKey(result)));
     revokeZoomDetailsForResults(state.results.filter((result) => completedKeys.has(getResultKey(result))));
     const retainedResults = state.results.filter((result) => !completedKeys.has(getResultKey(result)));
     const results = retainedResults.concat(newResults);
+    updateMoonIllumination(results);
     computeFinalScores(results);
     results.sort((a, b) => b.quality - a.quality);
 
@@ -9326,11 +10818,11 @@ async function analyzeSelectedFiles() {
     state.lastTotalFiles = supported.length;
     state.lastUnsupportedFiles = ignoredBeforeFailures + failures;
     if (analysisOutcome.stopped) {
-      state.lastAnalysisRunNote = `Analysis stopped after ${newResults.length} of ${pending.length} pending frame(s).`;
+      state.lastAnalysisRunNote = t("status.analysisStopped", { done: newResults.length, total: pending.length });
     } else {
       state.lastAnalysisRunNote =
         alreadyAnalyzed > 0
-          ? `Analysed ${newResults.length} new frame(s); kept ${alreadyAnalyzed} existing result(s).`
+          ? t("status.newFramesKept", { newCount: newResults.length, existing: alreadyAnalyzed })
           : "";
     }
     saveSettings();
@@ -9353,16 +10845,16 @@ function onScoreSettingChanged() {
 function onAnalysisModeChanged() {
   saveSettings();
   if (state.results.length === 0) {
-    setSummaryMessage(`${analysisModeLabel()} mode selected.`);
+    setSummaryMessage(t("status.modeSelected", { mode: analysisModeLabel() }));
     return;
   }
 
   const currentMode = getAnalysisMode();
   const needsRemeasure = state.results.some((result) => resultAnalysisMode(result) !== currentMode);
   if (needsRemeasure) {
-    setSummaryMessage(`Analysis mode changed to ${analysisModeLabel(currentMode)}. Click Analyse to re-measure frames in this mode.`);
+    setSummaryMessage(t("status.modeChanged", { mode: analysisModeLabel(currentMode) }));
   } else {
-    setSummaryMessage(`${analysisModeLabel(currentMode)} mode selected.`);
+    setSummaryMessage(t("status.modeSelected", { mode: analysisModeLabel(currentMode) }));
   }
 }
 
@@ -9400,9 +10892,10 @@ folderInput.addEventListener("change", () => {
   folderInput.value = "";
   updateFolderFileCount();
   if (addedCount === 0 && duplicateCount > 0) {
-    setSummaryMessage("No new files added from that folder.");
+    setSummaryMessage(t("status.noNewFiles"));
   } else if (state.results.length > 0) {
-    setSummaryMessage("Folder added. Click Analyse to process only the new files.");
+    setSummaryMessage(t("status.folderAdded"));
+    renderMoonIlluminationPanel();
   }
 });
 
@@ -9413,6 +10906,7 @@ if (clearFoldersBtn) {
     state.selectedFiles = [];
     state.selectedFileKeys.clear();
     state.selectedFolders = [];
+    state.siteManagerAutoOpened = false;
     state.nextFolderSelectionId = 1;
     if (folderInput) {
       folderInput.value = "";
@@ -9431,10 +10925,35 @@ if (clearFoldersBtn) {
     state.lastUnsupportedFiles = 0;
     resultsBody.innerHTML = "";
     exportBtn.disabled = true;
+    renderMoonIlluminationPanel();
     renderFilterPanel();
     updateSelectAllState();
     updateSelectionControls();
-    setSummaryMessage("Folder selection cleared.");
+    setSummaryMessage(t("status.foldersCleared"));
+  });
+}
+
+if (moonSiteForm) {
+  moonSiteForm.addEventListener("submit", saveSiteFromForm);
+}
+
+if (moonDetectedSites) {
+  moonDetectedSites.addEventListener("submit", saveDetectedSiteFromForm);
+}
+
+if (moonFolderSites) {
+  moonFolderSites.addEventListener("change", (event) => {
+    const select = event.target instanceof Element ? event.target.closest("select[data-folder-site]") : null;
+    if (!select) {
+      return;
+    }
+    const folderName = select.dataset.folderSite || "";
+    if (select.value) {
+      state.folderSiteAssignments[folderName] = select.value;
+    } else {
+      delete state.folderSiteAssignments[folderName];
+    }
+    refreshMoonContextFromSites();
   });
 }
 
@@ -9448,7 +10967,7 @@ analyzeBtn.addEventListener("click", () => {
       clearAnalysisRun(state.analysisRun);
     }
     stopAnalysisProgress();
-    setSummaryMessage("Analysis failed for one or more files.");
+    setSummaryMessage(t("status.analysisFailed"));
     setAnalysisControlsRunning(false);
     updateSelectionControls();
   });
@@ -9461,14 +10980,14 @@ if (stopAnalyzeBtn) {
 exportBtn.addEventListener("click", exportCsv);
 chooseOutputBtn.addEventListener("click", () => {
   chooseOutputDirectory().catch(() => {
-    setSummaryMessage("Could not open output folder picker.");
+    setSummaryMessage(t("status.outputPickerFailed"));
   });
 });
 selectKeepBtn.addEventListener("click", selectKeepers);
 clearSelectionBtn.addEventListener("click", clearSelection);
 sendSelectedBtn.addEventListener("click", () => {
   sendSelectedImages().catch(() => {
-    setSummaryMessage("Sending selected images failed.");
+    setSummaryMessage(t("status.sendFailed"));
     updateSelectionControls();
   });
 });
@@ -9483,6 +11002,14 @@ if (copyByTypeCheckbox) {
 
 if (haloPenaltyCheckbox) {
   haloPenaltyCheckbox.addEventListener("change", () => {
+    saveSettings();
+    scheduleScoreRefresh(120);
+  });
+}
+
+if (moonPenaltyPercentInput) {
+  moonPenaltyPercentInput.addEventListener("change", () => {
+    moonPenaltyPercentInput.value = String(getMoonPenaltyPercent());
     saveSettings();
     scheduleScoreRefresh(120);
   });
@@ -9508,6 +11035,7 @@ if (frameTypeTabs) {
     state.activeObjectShot = allObjectShotsKey;
     state.activeRecommendation = allRecommendationsKey;
     renderFilterPanel();
+    renderMoonIlluminationPanel();
     renderResults(visibleResults());
   });
 }
@@ -9527,6 +11055,7 @@ if (filterTabs) {
     state.activeObjectShot = allObjectShotsKey;
     state.activeRecommendation = allRecommendationsKey;
     renderFilterPanel();
+    renderMoonIlluminationPanel();
     renderResults(visibleResults());
   });
 }
@@ -9545,6 +11074,7 @@ if (objectShotTabs) {
     state.activeObjectShot = objectShot;
     state.activeRecommendation = allRecommendationsKey;
     renderFilterPanel();
+    renderMoonIlluminationPanel();
     renderResults(visibleResults());
   });
 }
@@ -9718,6 +11248,30 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+window.addEventListener("astro-language-change", () => {
+  state.lastAnalysisRunNote = "";
+  updateFolderFileCount();
+  setOutputLabel();
+  updateStarOverlayButton();
+  if (state.results.length > 0) {
+    renderAnalysisView();
+  } else {
+    state.analysisSummaryText = "";
+    renderMoonIlluminationPanel();
+    renderFilterPanel();
+    renderCalibrationReport();
+    setSummaryMessage();
+  }
+  if (state.analysisProgress) {
+    renderAnalysisProgress(state.analysisProgress);
+  }
+  const zoomResult = activeZoomResult();
+  if (zoomResult && !zoomOverlay.hidden) {
+    zoomMetrics.innerHTML = zoomMetricsMarkup(zoomResult);
+    updateZoomStatus(zoomResult);
+  }
+});
+
 applyStoredSettings();
 updateWeightLabels();
 updatePreviewStretchLabel();
@@ -9726,10 +11280,11 @@ setOutputLabel();
 updateFolderFileCount();
 renderFilterPanel();
 renderCalibrationReport();
+renderMoonIlluminationPanel();
 updateSelectAllState();
 updateSelectionControls();
 
 if (!hasOutputFolderSupport()) {
   chooseOutputBtn.disabled = true;
-  outputLabel.textContent = "Output folder: unsupported in this browser";
+  outputLabel.textContent = t("output.unsupported");
 }
