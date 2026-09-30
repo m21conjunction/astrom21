@@ -171,7 +171,7 @@ async function run() {
   const message = await posted;
   assert.equal(message.type, "result", message.error || "worker result expected");
   const result = message.result;
-  assert.equal(result.calculationVersion, "0.4.8");
+  assert.equal(result.calculationVersion, "0.4.9");
   assert.equal(result.frameType, "Light");
   assert.equal(result.sourceFolder, "TestNight");
   assert.equal(result.observationTimeUtc, "2026-01-03T10:02:30.000Z");
@@ -260,7 +260,7 @@ async function run() {
     "updateSkyCondition(moonlitCloud,{structureScore:0.2,rangePercent:7,starLossScore:0.4,medianLiftScore:0.5,hasRelativeReference:true})",
     main
   );
-  assert.equal(moonlitCloud.skyConditionKey, "moonlitHaze");
+  assert.equal(moonlitCloud.skyConditionKey, "moonlitCloud");
 
   const scoredWithSite = { ...result, fileKey: "score-site", fileName: "score-site.fits" };
   const scoredWithoutSite = {
@@ -305,9 +305,23 @@ async function run() {
   assert.equal(main.penalisedMoonResult.moonPenaltyCap, 0.1);
 
   main.cloudPenalisedMoonResult = { ...main.penalisedMoonResult, cloudSeverity: "Possible" };
-  assert.equal(vm.runInContext("moonImpactPenaltyForResult(cloudPenalisedMoonResult)", main), 0);
-  assert.equal(main.cloudPenalisedMoonResult.moonPenaltyApplied, false);
-  assert.match(main.cloudPenalisedMoonResult.moonPenaltyReason, /cloud penalty/);
+  main.cloudPenalisedMoonResult.cloudResidualScore = 0.2;
+  const cloudMoonPenalty = vm.runInContext("moonImpactPenaltyForResult(cloudPenalisedMoonResult)", main);
+  assert.ok(cloudMoonPenalty > 0, "Moon impact remains distinguishable when cloud evidence is present");
+  assert.equal(main.cloudPenalisedMoonResult.moonPenaltyApplied, true);
+  assert.match(main.cloudPenalisedMoonResult.moonPenaltyReason, /cloud residual/);
+
+  vm.runInContext("document.getElementById('moonPenaltyPercent').value = '100'", main);
+  main.cappedMoonResult = {
+    moonExposureScore: 100,
+    moonSmoothLiftScore: 1,
+    cloudResidualScore: 0.2,
+    cloudSeverity: "Likely"
+  };
+  const cappedMoonPenalty = vm.runInContext("moonImpactPenaltyForResult(cappedMoonResult, 0.1, 0.2)", main);
+  assert.equal(cappedMoonPenalty, 0.5, "Moon penalty respects the combined sky cap");
+  assert.equal(main.cappedMoonResult.moonPenaltyCapped, true);
+  vm.runInContext("document.getElementById('moonPenaltyPercent').value = '10'", main);
 
   main.lowExposureMoonResult = { ...main.penalisedMoonResult, moonExposureScore: 15, cloudSeverity: "None" };
   assert.equal(vm.runInContext("moonImpactPenaltyForResult(lowExposureMoonResult)", main), 0);

@@ -604,6 +604,7 @@ button:disabled {
 .moon-context-badge[data-level="high"],
 .moon-context-badge[data-level="veryHigh"],
 .moon-context-badge[data-sky="moonlitHaze"],
+.moon-context-badge[data-sky="moonlitCloud"],
 .moon-context-badge[data-sky="cloudLikely"] {
   border-color: #f59e0b;
   background: #fffbeb;

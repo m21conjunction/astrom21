@@ -1,5 +1,12 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.9 - 2026-09-30
+
+- Separated Moon-explained smooth background lift from transient cloud residuals.
+- Moon and cloud penalties can now both apply to a Light frame when the evidence supports both effects.
+- Added a combined 75% sky-penalty cap, independent UI sky wording for Moonlit cloud, and CSV fields for the separate evidence.
+- Updated the Moon calculation help, README, and Description documentation.
+
 ## 0.4.8 - 2026-09-30
 
 - Replaced the v0.4.7 median-lift multiplier after labelled frames showed that zero lift does not mean no cloud.

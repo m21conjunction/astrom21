@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-09-29
+Updated: 2026-09-30
 
-Current app version: **0.4.8**.
+Current app version: **0.4.9**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -724,6 +724,7 @@ CSV fields:
 - `cloud_star_anomaly_score`
 - `cloud_noise_change_score`
 - `cloud_temporal_anomaly_score`
+- `cloud_residual_score`
 - `cloud_background_range_percent`
 - `cloud_summary`
 
@@ -2447,7 +2448,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.4.8`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.4.9`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `frame_type`: detected frame type.
@@ -2535,6 +2536,9 @@ Short meanings:
 - `cloud_star_anomaly_score`: 0 to 1 two-sided star-count anomaly relative to the same group.
 - `cloud_noise_change_score`: 0 to 1 robust local noise change.
 - `cloud_temporal_anomaly_score`: combined transient cloud-evidence score from tile, background, star, and noise changes.
+- `cloud_residual_score`: the transient cloud component used to discount Moon-explained smooth lift; currently equal to `cloud_temporal_anomaly_score`.
+- `moon_smooth_lift_score`: same-object/filter positive median lift after discounting the transient cloud residual and relative star loss.
+- `moon_explained_impact_score`: `moonExposureScore / 100 * moonSmoothLiftScore`; this estimates the fraction of Moon-related image impact supported by both geometry and image evidence.
 - `cloud_background_range_percent`: p90 minus p10 tile-background range as a percent of the image/background scale.
 - `cloud_summary`: short cloud warning text shown in the UI.
 - `halo_warning`: OK, Possible Halo, or Likely Halo.
@@ -2601,9 +2605,9 @@ That pattern should not automatically be interpreted as tracking drift or tilt.
 
 Calibration frames are not expected to have good stars. A Flat, Dark, Bias, or Dark Flat is judged by signal level, saturation or bright-pixel behaviour, spread/uniformity, structure, and consistency with the calibration set. Star overlays and star-count display are kept to light frames.
 
-## Offline Moon And Sky Context (v0.4.2)
+## Offline Moon And Sky Context (v0.4.2, refined in v0.4.9)
 
-Moon geometry is context. It does not enter the quality score merely because the Moon was bright or near the target. Image-derived cloud evidence still uses the existing cloud rules and penalties. From v0.4.4, the numeric **Maximum Moon Penalty** setting can use Moon context only when it agrees with a smooth, image-derived median-background lift.
+Moon geometry is context. It does not enter the quality score merely because the Moon was bright or near the target. The application now separates two physical explanations for a bright or degraded frame: a smooth, predictable Moon-related background component and a transient cloud residual. These components can coexist. From v0.4.4, the numeric **Maximum Moon Penalty** setting can use Moon context only when it agrees with a Moon-explained smooth, image-derived median-background lift.
 
 ### What The Percentage Means
 
@@ -2712,18 +2716,19 @@ observedImpact = 0.50 * structureScore
                + 0.18 * medianLiftScore
 ```
 
-The display combines this evidence with Moon exposure:
+The display combines this evidence with Moon exposure, but keeps the explanations separate:
 
 - **Moonlight likely**: high Moon exposure with a smooth median lift, no cloud-level structure, and no strong star loss.
-- **Possible moonlit haze/cloud**: normal cloud evidence occurs while Moon exposure is plausible. Moon light does not cancel the cloud warning.
+- **Moonlit cloud**: transient cloud residuals and a remaining Moon-explained smooth lift are both present. The two score contributions remain separate.
+- **Possible moonlit haze/cloud**: cloud evidence occurs while Moon exposure is plausible, but the remaining smooth-lift evidence is limited.
 - **Cloud likely**: normal cloud evidence occurs without strong Moon exposure.
 - **Non-Moon brightening**: a smooth median lift is not explained by the Moon; twilight or light pollution is possible.
 - **Clear evidence**: no material structure or star-loss evidence.
 - **Indeterminate**: mixed evidence or too few comparable frames.
 
-The existing `cloudSeverity`, cloud thresholds, score caps, and cloud penalties are unchanged.
+The existing cloud detector and thresholds remain unchanged. The new `cloudResidualScore` is the transient anomaly component used to discount a cloud frame's smooth lift before estimating Moon impact.
 
-### User-Entered Moon Impact Penalty (v0.4.4)
+### User-Entered Moon Impact Penalty (v0.4.4, separated from clouds in v0.4.9)
 
 **Maximum Moon Penalty** is a numeric percentage from `0` to `100`, saved with the other local settings. Its default is `0%`, which disables the penalty. It applies only to Light frames. Potential exposure is not sufficient by itself: a bright Moon near the target can still produce no penalty when the image background does not show the expected smooth lift.
 
@@ -2731,30 +2736,40 @@ The penalty gate requires all of the following:
 
 - the user-entered maximum is greater than `0%`;
 - Potential Moon Exposure is at least Moderate (`moonExposureScore >= 22`);
-- the same object-shot/filter comparison produces `medianLiftScore > 0.15`;
-- cloud structure remains below the Possible Cloud structure threshold (`structureScore < 0.03`);
-- relative star-loss evidence remains below the cloud-support threshold (`starLossScore < 0.24`);
-- the frame is not already classified as `Possible Cloud` or `Likely Cloud`.
+- the same object-shot/filter comparison produces a Moon-explained smooth lift greater than `0.15`;
+- the frame's transient cloud residual is used to reduce that smooth-lift evidence rather than vetoing it;
+- a combined sky-penalty cap remains available after any cloud penalty.
 
 The confirmed impact combines the independent astronomical and image measurements:
 
 ```text
-confirmedMoonImpact = clamp((moonExposureScore / 100) * medianLiftScore, 0, 1)
+cloudResidualScore = cloudTemporalAnomalyScore
+moonSmoothLiftScore = clamp(
+    medianLiftScore
+      * (1 - 0.75 * cloudResidualScore)
+      * (1 - 0.35 * relativeStarLossScore),
+    0,
+    1
+)
+confirmedMoonImpact = clamp((moonExposureScore / 100) * moonSmoothLiftScore, 0, 1)
 ```
 
 ```text
 userMaximumFraction = userMaximumPercent / 100
-penaltyFraction = userMaximumFraction * confirmedMoonImpact
+requestedMoonPenaltyFraction = userMaximumFraction * confirmedMoonImpact
+skyPenaltyFloor = scoreBeforeMoon * (1 - 0.75)
+availableSkyPenaltyFraction = max(0, 1 - skyPenaltyFloor / scoreBeforeMoon)
+penaltyFraction = min(requestedMoonPenaltyFraction, availableSkyPenaltyFraction)
 scoreAfterMoon = scoreBeforeMoon * (1 - penaltyFraction)
 ```
 
-For example, a user maximum of `10%`, Moon exposure of `60/100`, and median-lift evidence of `0.60` produce `confirmedMoonImpact = 0.36` and a `3.6%` multiplicative reduction. The entered percentage is therefore an absolute ceiling, not an automatic deduction.
+For example, a user maximum of `10%`, Moon exposure of `60/100`, median-lift evidence of `0.60`, and a cloud residual of `0.20` produce a Moon smooth-lift score of approximately `0.49`, a confirmed Moon impact of approximately `0.29`, and a requested reduction of approximately `2.9%`. The entered percentage is therefore an absolute ceiling, not an automatic deduction.
 
-Fractions below `0.002` (less than `0.2%`) are treated as too small to affect the rounded score. The penalty is skipped whenever a cloud penalty applies, preventing the same background degradation from being counted as both cloud and Moon impact. The **Why this score?** breakdown identifies an applied Moon reduction and gives the exposure, median-lift evidence, and user maximum.
+Fractions below `0.002` (less than `0.2%`) are treated as too small to affect the rounded score. A cloud penalty no longer disables the Moon calculation. Instead, the cloud residual reduces the Moon-explained smooth-lift evidence, and the two penalties are listed independently in **Why this score?**. The total reduction from the cloud and Moon stages is capped at `75%` of the score entering the sky-impact stage. This avoids excessive double counting while still distinguishing a cloudy frame, a Moonlit frame, and a Moonlit cloud.
 
 ### Display And Export
 
-Each session/object/filter/site card shows a representative phase pictogram, UTC range, frame count, site, illumination range, Moon altitude, target separation, Potential Moon Exposure, and sky interpretation. Each Light frame also displays UTC, Moon Lit, Moon Phase, Moon Age, Site, Moon Alt, Moon Sep, Moon Exposure, and Sky.
+Each session/object/filter/site card shows a representative phase pictogram, UTC range, frame count, site, illumination range, Moon altitude, target separation, Potential Moon Exposure, and sky interpretation. Each Light frame also displays UTC, Moon Lit, Moon Phase, Moon Age, Site, Moon Alt, Moon Sep, Moon Exposure, Moon Impact, and Sky.
 
 CSV adds:
 
@@ -2773,9 +2788,10 @@ CSV adds:
 - `moon_calculation_method`
 - `moon_score_effect`, either `none` or `optional penalty applied` for Light frames
 - `moon_penalty_enabled`, `moon_penalty_setting_percent`, `moon_penalty_applied`
-- `moon_penalty_cap_percent`, `moon_confirmed_impact`, `moon_penalty_fraction`
+- `moon_penalty_cap_percent`, `moon_confirmed_impact`, `moon_smooth_lift_score`, `moon_explained_impact_score`, `moon_penalty_capped`, `moon_penalty_fraction`
 - `moon_penalty_reason`
 - `sky_condition`, `sky_condition_confidence`, `sky_condition_summary`
 - `observed_background_impact_score`
+- `cloud_residual_score`
 
 Calibration frames report the Moon fields as `skipped`.

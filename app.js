@@ -56,7 +56,7 @@ const metricTranslationKeys = {
   Cloud: "metric.cloud", Clip: "metric.clip", "Near Sat": "metric.nearSat", Tracking: "metric.tracking",
   "Guide Stars": "metric.guideStars", UTC: "metric.utc", "Moon Lit": "metric.moonLit",
   "Moon Phase": "metric.moonPhase", "Moon Age": "metric.moonAge", "Moon Alt": "metric.moonAlt",
-  "Moon Sep": "metric.moonSep", "Moon Exposure": "metric.moonExposure", Sky: "metric.sky", Site: "metric.site"
+  "Moon Sep": "metric.moonSep", "Moon Exposure": "metric.moonExposure", "Moon Impact": "metric.moonImpact", Sky: "metric.sky", Site: "metric.site"
 };
 
 function displayMetricLabel(value) {
@@ -175,7 +175,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.4.8";
+const appVersion = "0.4.9";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -469,6 +469,8 @@ const cloudExtremeStructureScore = 0.43;
 const cloudExtremeSingleFrameBackgroundRangePercent = 14.5;
 const cloudExtremeSingleFrameStructureScore = 0.55;
 const cloudUnconfirmedStructureScoreCap = 0.34;
+const moonSmoothLiftMinimum = 0.15;
+const combinedSkyPenaltyMaximum = 0.75;
 const flatArtifactGroupMinimum = 3;
 const selectedFileMetadata = new WeakMap();
 let analysisWorkerObjectUrl = "";
@@ -5519,6 +5521,9 @@ function resetCloudAssessment(result) {
   result.cloudStarAnomalyScore = 0;
   result.cloudNoiseChangeScore = 0;
   result.cloudTemporalAnomalyScore = 0;
+  result.cloudResidualScore = 0;
+  result.moonSmoothLiftScore = 0;
+  result.moonExplainedImpactScore = 0;
   result.cloudSummary = "No cloud warning";
   result.skyConditionKey = "indeterminate";
   result.skyConditionConfidence = "low";
@@ -5532,18 +5537,39 @@ function updateSkyCondition(result, evidence) {
   const moonAvailable = Number.isFinite(moonExposure);
   const moonPlausible = moonAvailable && moonExposure >= 22;
   const strongMoon = moonAvailable && moonExposure >= 48;
+  const moonSmoothLiftScore = clamp(
+    Number.isFinite(Number(evidence.moonSmoothLiftScore))
+      ? Number(evidence.moonSmoothLiftScore)
+      : Number(result.moonSmoothLiftScore) || medianLiftScore || 0,
+    0,
+    1
+  );
+  const moonExplainedImpactScore = moonAvailable
+    ? clamp((moonExposure / 100) * moonSmoothLiftScore, 0, 1)
+    : 0;
+  result.moonSmoothLiftScore = moonSmoothLiftScore;
+  result.moonExplainedImpactScore = moonExplainedImpactScore;
   const observedImpact = clamp(structureScore * 0.5 + starLossScore * 0.32 + medianLiftScore * 0.18, 0, 1);
   result.observedBackgroundImpactScore = observedImpact;
 
   if (result.cloudSeverity === "Likely" || result.cloudSeverity === "Possible") {
-    result.skyConditionKey = moonPlausible ? "moonlitHaze" : "cloudLikely";
+    result.skyConditionKey = moonPlausible && moonSmoothLiftScore >= moonSmoothLiftMinimum
+      ? "moonlitCloud"
+      : moonPlausible
+        ? "moonlitHaze"
+        : "cloudLikely";
     result.skyConditionConfidence = result.cloudSeverity === "Likely" ? "high" : "moderate";
-    result.skyConditionSummary = moonPlausible
-      ? `${result.cloudSeverity} cloud or haze with plausible Moon illumination; structure ${formatMetric(
+    result.skyConditionSummary = result.skyConditionKey === "moonlitCloud"
+      ? `${result.cloudSeverity} cloud residual plus Moon-explained smooth lift; cloud residual ${formatMetric(
           structureScore,
           2
-        )}, star-loss signal ${formatMetric(starLossScore * 100, 0)}%`
-      : `${result.cloudSeverity} cloud evidence without strong Moon exposure; structure ${formatMetric(
+        )}, Moon-explained impact ${formatMetric(moonExplainedImpactScore * 100, 0)}%`
+      : result.skyConditionKey === "moonlitHaze"
+        ? `${result.cloudSeverity} cloud or haze with plausible Moon illumination but limited smooth-lift evidence; structure ${formatMetric(
+            structureScore,
+            2
+          )}, star-loss signal ${formatMetric(starLossScore * 100, 0)}%`
+        : `${result.cloudSeverity} cloud evidence without strong Moon exposure; structure ${formatMetric(
           structureScore,
           2
         )}, star-loss signal ${formatMetric(starLossScore * 100, 0)}%`;
@@ -5552,20 +5578,23 @@ function updateSkyCondition(result, evidence) {
 
   if (
     strongMoon &&
-    medianLiftScore >= 0.28 &&
+    moonSmoothLiftScore >= 0.28 &&
     structureScore < cloudPossibleStructureScore &&
     starLossScore < cloudSupportStarLossScore
   ) {
     result.skyConditionKey = "moonlightLikely";
     result.skyConditionConfidence = hasRelativeReference ? "moderate" : "low";
-    result.skyConditionSummary = `Smooth background lift is consistent with Moon exposure ${formatMetric(moonExposure, 0)}/100`;
+    result.skyConditionSummary = `Smooth background lift is consistent with Moon exposure ${formatMetric(moonExposure, 0)}/100; explained impact ${formatMetric(
+      moonExplainedImpactScore * 100,
+      0
+    )}%`;
     return;
   }
 
   if (
     moonAvailable &&
     moonExposure < 22 &&
-    medianLiftScore >= 0.45 &&
+    moonSmoothLiftScore >= 0.45 &&
     structureScore < cloudPossibleStructureScore &&
     starLossScore < cloudSupportStarLossScore
   ) {
@@ -5701,6 +5730,15 @@ function updateCloudAssessmentForGroup(results) {
       0,
       1
     );
+    // Treat the transient part as cloud residual. A smooth positive lift can
+    // still be Moon-related, but confidence in that explanation falls as the
+    // frame diverges from its nearby same-object/filter peers.
+    const cloudResidualScore = temporalAnomalyScore;
+    const moonSmoothLiftScore = clamp(
+      medianLiftScore * (1 - cloudResidualScore * 0.75) * (1 - starLossScore * 0.35),
+      0,
+      1
+    );
     const independentSupport = Math.max(backgroundChangeScore, starAnomalyScore, noiseChangeScore, medianLiftScore);
     const multipleSignals = [
       tileResidualScore >= 0.22,
@@ -5736,6 +5774,8 @@ function updateCloudAssessmentForGroup(results) {
     result.cloudStarAnomalyScore = starAnomalyScore;
     result.cloudNoiseChangeScore = noiseChangeScore;
     result.cloudTemporalAnomalyScore = temporalAnomalyScore;
+    result.cloudResidualScore = cloudResidualScore;
+    result.moonSmoothLiftScore = moonSmoothLiftScore;
     const relativeSummary =
       hasRelativeStarReference && hasRelativeBackgroundReference
         ? `${formatMetric(starLossScore * 100, 0)}% star loss, ${formatMetric(medianLiftScore * 100, 0)}% median-lift signal`
@@ -5755,6 +5795,7 @@ function updateCloudAssessmentForGroup(results) {
       rangePercent: backgroundChangeScore * 100,
       starLossScore,
       medianLiftScore,
+      moonSmoothLiftScore,
       hasRelativeReference: hasRelativeStarReference && hasRelativeBackgroundReference
     });
   }
@@ -5775,6 +5816,7 @@ function resetMoonImpactPenalty(result) {
   result.moonPenaltyFraction = 0;
   result.moonPenaltyCap = 0;
   result.moonConfirmedImpact = 0;
+  result.moonPenaltyCapped = false;
   result.moonPenaltyReason = moonPenaltyEnabled() ? "No confirmed Moon impact" : "Disabled";
 }
 
@@ -5783,26 +5825,27 @@ function moonImpactPenaltyCap(exposureScore) {
   return getMoonPenaltyPercent() / 100;
 }
 
-function moonImpactPenaltyForResult(result) {
+function moonImpactPenaltyForResult(result, currentScore = NaN, skyStartScore = NaN) {
   resetMoonImpactPenalty(result);
   if (!moonPenaltyEnabled()) {
     return 0;
   }
-  if (result.cloudSeverity === "Possible" || result.cloudSeverity === "Likely") {
-    result.moonPenaltyReason = "Skipped because the cloud penalty already covers this frame";
-    return 0;
-  }
 
   const exposureScore = Number(result.moonExposureScore);
-  const medianLiftScore = clamp(Number(result.cloudMedianLiftScore) || 0, 0, 1);
-  const structureScore = clamp(
-    Number.isFinite(Number(result.cloudTemporalAnomalyScore))
-      ? Number(result.cloudTemporalAnomalyScore)
-      : Number(result.cloudStructureScore) || 0,
+  const smoothLiftScore = clamp(
+    Number.isFinite(Number(result.moonSmoothLiftScore))
+      ? Number(result.moonSmoothLiftScore)
+      : Number(result.cloudMedianLiftScore) || 0,
     0,
     1
   );
-  const starLossScore = clamp(Number(result.cloudStarLossScore) || 0, 0, 1);
+  const cloudResidualScore = clamp(
+    Number.isFinite(Number(result.cloudResidualScore))
+      ? Number(result.cloudResidualScore)
+      : Number(result.cloudTemporalAnomalyScore) || 0,
+    0,
+    1
+  );
   const cap = moonImpactPenaltyCap(exposureScore);
   result.moonPenaltyCap = cap;
   if (cap === 0) {
@@ -5811,26 +5854,37 @@ function moonImpactPenaltyForResult(result) {
       : "Moon exposure is unavailable";
     return 0;
   }
-  if (medianLiftScore <= 0.15) {
-    result.moonPenaltyReason = "No meaningful smooth median background lift";
-    return 0;
-  }
-  if (structureScore >= cloudPossibleStructureScore || starLossScore >= cloudSupportStarLossScore) {
-    result.moonPenaltyReason = "Background is not smooth enough for a Moon-only penalty";
+  if (smoothLiftScore <= moonSmoothLiftMinimum) {
+    result.moonPenaltyReason = "No meaningful Moon-explained smooth background lift";
     return 0;
   }
 
-  const confirmedImpact = clamp((exposureScore / 100) * medianLiftScore, 0, 1);
-  const penaltyFraction = cap * confirmedImpact;
+  const confirmedImpact = clamp((exposureScore / 100) * smoothLiftScore, 0, 1);
+  const requestedPenaltyFraction = cap * confirmedImpact;
+  let penaltyFraction = requestedPenaltyFraction;
+  if (Number.isFinite(currentScore) && Number.isFinite(skyStartScore) && skyStartScore > 0) {
+    const minimumSkyScore = skyStartScore * (1 - combinedSkyPenaltyMaximum);
+    const availablePenaltyFraction = currentScore > minimumSkyScore
+      ? clamp(1 - minimumSkyScore / currentScore, 0, 1)
+      : 0;
+    penaltyFraction = Math.min(penaltyFraction, availablePenaltyFraction);
+    result.moonPenaltyCapped = penaltyFraction + 1e-9 < requestedPenaltyFraction;
+  }
   result.moonConfirmedImpact = confirmedImpact;
   result.moonPenaltyFraction = penaltyFraction;
   result.moonPenaltyApplied = penaltyFraction >= 0.002;
-  result.moonPenaltyReason = result.moonPenaltyApplied
-    ? `Moon exposure ${formatMetric(exposureScore, 0)}/100, smooth median-lift signal ${formatMetric(
-        medianLiftScore * 100,
-        0
-      )}%, user maximum ${formatMetric(cap * 100, 1)}%`
-    : "Confirmed Moon impact is too small to affect the rounded score";
+  if (!result.moonPenaltyApplied) {
+    result.moonPenaltyReason = result.moonPenaltyCapped
+      ? `Moon impact was limited by the combined sky penalty cap of ${formatMetric(combinedSkyPenaltyMaximum * 100, 0)}%`
+      : "Confirmed Moon impact is too small to affect the rounded score";
+    return 0;
+  }
+  result.moonPenaltyReason = `Moon exposure ${formatMetric(exposureScore, 0)}/100, Moon-explained smooth lift ${formatMetric(
+    smoothLiftScore * 100,
+    0
+  )}%, cloud residual ${formatMetric(cloudResidualScore * 100, 0)}%, user maximum ${formatMetric(cap * 100, 1)}%${
+    result.moonPenaltyCapped ? `, combined sky penalty capped at ${formatMetric(combinedSkyPenaltyMaximum * 100, 0)}%` : ""
+  }`;
   return result.moonPenaltyApplied ? penaltyFraction : 0;
 }
 
@@ -5907,13 +5961,14 @@ function computeFinalScoresForGroup(results) {
       penalties.push(scorePenalty("Halo", before, score, haloLabel(results[i])));
     }
 
+    const skyPenaltyStartScore = score;
     if (results[i].cloudSeverity === "Likely" || results[i].cloudSeverity === "Possible") {
       const before = score;
       score = applyCloudQualityPenalty(score, results[i]);
       penalties.push(scorePenalty("Clouds", before, score, cloudLabel(results[i])));
     }
 
-    const moonPenaltyFraction = moonImpactPenaltyForResult(results[i]);
+    const moonPenaltyFraction = moonImpactPenaltyForResult(results[i], score, skyPenaltyStartScore);
     if (moonPenaltyFraction > 0) {
       const before = score;
       score *= 1 - moonPenaltyFraction;
@@ -6452,6 +6507,7 @@ function metricItems(result) {
     ["Moon Alt", Number.isFinite(result.moonAltitudeDegrees) ? `${formatMetric(result.moonAltitudeDegrees, 1)} deg` : "-"],
     ["Moon Sep", Number.isFinite(result.moonTargetSeparationDegrees) ? `${formatMetric(result.moonTargetSeparationDegrees, 1)} deg` : "-"],
     ["Moon Exposure", Number.isFinite(result.moonExposureScore) ? `${moonExposureLabel(result.moonExposureKey)} (${formatMetric(result.moonExposureScore, 0)})` : "-"],
+    ["Moon Impact", moonImpactLabel(result)],
     ["Sky", skyConditionLabel(result.skyConditionKey)],
     ["Scale", formatPixelScale(result.pixelScaleArcsecPerPixel)],
     ["Focal", Number.isFinite(result.focalLengthMm) ? `${formatMetric(result.focalLengthMm, 0)} mm` : "-"],
@@ -7826,6 +7882,16 @@ function skyConditionLabel(key) {
   return t(`moon.sky.${key || "indeterminate"}`);
 }
 
+function moonImpactLabel(result) {
+  if (!result || result.frameType !== "Light" || !Number.isFinite(Number(result.moonExposureScore))) {
+    return "-";
+  }
+  const explainedImpact = Number(result.moonExplainedImpactScore) || 0;
+  return explainedImpact > 0
+    ? t("moon.impactExplained", { value: formatMetric(explainedImpact * 100, 0) })
+    : t("moon.impactNone");
+}
+
 function moonContextGroups(results) {
   const groups = new Map();
   for (const result of results) {
@@ -7952,7 +8018,7 @@ function formatSessionTimeRange(results) {
 }
 
 function representativeSkyCondition(results) {
-  const priority = { moonlitHaze: 6, cloudLikely: 5, brightening: 4, moonlightLikely: 3, indeterminate: 2, clear: 1 };
+  const priority = { moonlitCloud: 7, moonlitHaze: 6, cloudLikely: 5, brightening: 4, moonlightLikely: 3, indeterminate: 2, clear: 1 };
   return results.reduce(
     (selected, result) => (priority[result.skyConditionKey] > priority[selected.skyConditionKey] ? result : selected),
     results[0]
@@ -9063,6 +9129,7 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     moonPenaltyFraction: 0,
     moonPenaltyCap: 0,
     moonConfirmedImpact: 0,
+    moonPenaltyCapped: false,
     moonPenaltyReason: "Disabled",
     siteName: siteInfo.name || "",
     siteHeaderName: siteInfo.name || "",
@@ -9180,6 +9247,9 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     cloudStarAnomalyScore: 0,
     cloudNoiseChangeScore: 0,
     cloudTemporalAnomalyScore: 0,
+    cloudResidualScore: 0,
+    moonSmoothLiftScore: 0,
+    moonExplainedImpactScore: 0,
     cloudBackgroundRangePercent: cloudMetrics.cloudBackgroundRangePercent,
     cloudBackgroundRange: cloudMetrics.cloudBackgroundRange,
     cloudStripRangePercent: cloudMetrics.cloudStripRangePercent,
@@ -10455,6 +10525,9 @@ function exportCsv() {
     "moon_penalty_applied",
     "moon_penalty_cap_percent",
     "moon_confirmed_impact",
+    "moon_smooth_lift_score",
+    "moon_explained_impact_score",
+    "moon_penalty_capped",
     "moon_penalty_fraction",
     "moon_penalty_reason",
     "sky_condition",
@@ -10522,6 +10595,7 @@ function exportCsv() {
     "cloud_star_anomaly_score",
     "cloud_noise_change_score",
     "cloud_temporal_anomaly_score",
+    "cloud_residual_score",
     "cloud_background_range_percent",
     "cloud_summary",
     "halo_warning",
@@ -10612,6 +10686,9 @@ function exportCsv() {
       result.frameType === "Light" ? (result.moonPenaltyApplied ? "yes" : "no") : "skipped",
       result.frameType === "Light" ? formatMetric((Number(result.moonPenaltyCap) || 0) * 100, 3) : "skipped",
       result.frameType === "Light" ? formatMetric(result.moonConfirmedImpact, 5) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonSmoothLiftScore, 5) : "skipped",
+      result.frameType === "Light" ? formatMetric(result.moonExplainedImpactScore, 5) : "skipped",
+      result.frameType === "Light" ? (result.moonPenaltyCapped ? "yes" : "no") : "skipped",
       result.frameType === "Light" ? formatMetric(result.moonPenaltyFraction, 5) : "skipped",
       result.frameType === "Light" ? result.moonPenaltyReason || "" : "skipped",
       result.frameType === "Light" ? result.skyConditionKey || "indeterminate" : "skipped",
@@ -10679,6 +10756,7 @@ function exportCsv() {
       formatMetric(result.cloudStarAnomalyScore, 4),
       formatMetric(result.cloudNoiseChangeScore, 4),
       formatMetric(result.cloudTemporalAnomalyScore, 4),
+      formatMetric(result.cloudResidualScore, 4),
       formatMetric(result.cloudBackgroundRangePercent, 3),
       result.cloudSummary || "",
       lightOnlyText(haloLabel(result)),

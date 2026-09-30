@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Astronomy Sub Analyser</title>
-    <link rel="stylesheet" href="./styles.css?v=0.4.8">
+    <link rel="stylesheet" href="./styles.css?v=0.4.9">
   </head>
   <body>
     <main class="app">
@@ -26,7 +26,7 @@
             </select>
           </label>
           <div class="header-status">
-            <span>v0.4.8</span>
+            <span>v0.4.9</span>
             <span data-i18n="brand.offline">On-premise</span>
             <span>FITS/XISF</span>
           </div>
@@ -113,7 +113,7 @@
                 <span aria-hidden="true">%</span>
               </span>
             </label>
-            <button class="help-button" type="button" aria-label="Moon impact penalty calculation" data-i18n-aria-label="help.moonPenaltyLabel" data-help="Enter the maximum score reduction from 0% to 100%; 0% disables it. The actual reduction is this maximum multiplied by plausible Moon exposure and smooth median-background-lift evidence. Frames already receiving a cloud penalty are never penalised twice." data-i18n-help="help.moonPenalty">?</button>
+            <button class="help-button" type="button" aria-label="Moon impact penalty calculation" data-i18n-aria-label="help.moonPenaltyLabel" data-help="Enter the maximum score reduction from 0% to 100%; 0% disables it. The actual reduction uses plausible Moon exposure and the Moon-explained smooth background lift after discounting transient cloud residuals. Moon and cloud impacts may both apply, with a combined sky-penalty cap to prevent excessive double counting." data-i18n-help="help.moonPenalty">?</button>
           </div>
           <label class="export-option" for="csvSeparator">
             <span data-i18n="actions.csvSeparator">CSV Separator</span>
@@ -245,8 +245,8 @@
         <div class="zoom-metrics" id="zoomMetrics"></div>
       </section>
     </div>
-    <script src="./moon-calculation.js?v=0.4.8"></script>
-    <script src="./i18n.js?v=0.4.8"></script>
-    <script src="./app.js?v=0.4.8"></script>
+    <script src="./moon-calculation.js?v=0.4.9"></script>
+    <script src="./i18n.js?v=0.4.9"></script>
+    <script src="./app.js?v=0.4.9"></script>
   </body>
 </html>

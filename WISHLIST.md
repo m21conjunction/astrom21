@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-09-29
-Current app version: 0.4.8
+Updated: 2026-09-30
+Current app version: 0.4.9
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -77,7 +77,7 @@ Best options:
 21. **Cloud False-Positive Guard**
    Implemented as a deterministic heuristic. Cloud warnings use transient same-object/filter batch evidence. Smooth gradients and real nebulosity can still appear in the exported raw cloud structure metrics, but stable structure does not apply a cloud warning or score penalty by itself.
    Updated in v0.3.13 so cloud background structure and same-object/filter background-lift evidence use sampled pixel medians instead of arithmetic means. The general Mean metric remains available but is not used for the cloud background-lift decision.
-   Updated in v0.4.7 with a median-lift weighting experiment, then replaced in v0.4.8 after labelled frames showed that zero lift does not mean no cloud. The v0.4.8 detector compares local tile patterns, median background, star-count anomalies, and noise changes across nearby frames. The raw range/structure values remain diagnostic.
+   Updated in v0.4.7 with a median-lift weighting experiment, then replaced in v0.4.8 after labelled frames showed that zero lift does not mean no cloud. The v0.4.8 detector compares local tile patterns, median background, star-count anomalies, and noise changes across nearby frames. In v0.4.9, Moon-explained smooth lift is separated from transient cloud residuals so both effects can be reported and scored independently with a combined cap. The raw range/structure values remain diagnostic.
 
 22. **Higher-Resolution Frame Preview And Stronger Magnifier**
    Implemented in v0.3.8 and refined through v0.3.12. The detail view keeps the full preview fit-to-window with the normal grid stretch, the magnifier offers 12x and 16x levels in addition to 2x, 4x, and 8x, and the magnifier lens uses a separate high-resolution source with its own remembered Lens Stretch slider. The full preview itself stays stable and does not swap to a delayed high-resolution render.
@@ -115,7 +115,7 @@ Best options:
    Status: advanced in v0.4.0. The visible app/package version and CSV `calculation_version` are aligned, and `CHANGELOG.md` now records release notes. Settings migration rules still need to be designed before scoring defaults or stored-setting formats change.
 
 23. **Offline Moonlight Context**
-   Status: substantially implemented in v0.4.2 and extended through v0.4.5. The app groups mixed batches by observing session, object shot, filter, and site; calculates Moon phase, illumination, position, altitude/azimuth, target separation, and filter-aware potential exposure internally; and compares that context with median background structure/lift and relative star loss. Named coordinate sites can be stored locally and assigned per selected folder when FITS/XISF site headers are absent. Header-detected coordinates can also be given a saved name that is reused automatically for matching frames without replacing the header coordinates. The user can enter a maximum Moon penalty from 0% to 100%; 0% disables it, the actual reduction is scaled by exposure and median-lift evidence, and it is skipped when a cloud penalty applies.
+   Status: substantially implemented in v0.4.2 and extended through v0.4.9. The app groups mixed batches by observing session, object shot, filter, and site; calculates Moon phase, illumination, position, altitude/azimuth, target separation, and filter-aware potential exposure internally; and compares that context with median background structure/lift and relative star loss. Named coordinate sites can be stored locally and assigned per selected folder when FITS/XISF site headers are absent. Header-detected coordinates can also be given a saved name that is reused automatically for matching frames without replacing the header coordinates. The user can enter a maximum Moon penalty from 0% to 100%; 0% disables it, the actual reduction is scaled by Moon exposure and the Moon-explained lift after cloud-residual discounting, and it can now apply alongside a separate cloud penalty under a combined sky cap.
    Calculate Moon conditions locally, without an internet connection. Use each frame's observation time from FITS/XISF metadata (`DATE-OBS`, `DATE-AVG`, or `DATE-END`, with exposure midpoint and filename fallbacks) and an observing location configured by the user or read from available site-coordinate headers.
    If the files do not contain usable observing-site coordinates, ask the user for latitude and longitude or let them choose a city from a bundled offline location list. Show the resolved coordinates for confirmation, support north/south and east/west clearly, and save named observing sites locally so the user does not have to enter the same location for every batch. City selection must not depend on online geocoding and should allow manual coordinates for observatories or other locations outside the bundled list.
    If target coordinates cannot be read from the image metadata or another local source, let the user enter the object's RA and DEC manually. Accept RA/DEC in both sexagesimal notation (`hh mm ss` and signed `dd mm ss`) and decimal degrees, validate and display the normalised coordinates before use, and apply them to the appropriate object-shot group rather than blindly to every Light frame in a mixed batch. Allow the user to save the coordinates with a target name for offline reuse.
