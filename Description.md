@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-09-30
+Updated: 2026-10-01
 
-Current app version: **0.4.9**.
+Current app version: **0.4.10**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -174,6 +174,24 @@ Each worker receives the original local file object, reads FITS, XISF, or bitmap
 The worker pool does not upload data and does not require internet access.
 
 If Web Workers are unavailable or blocked, the app falls back to single-thread local analysis on the main page.
+
+### WASM/SIMD Pixel Statistics (v0.4.10)
+
+Worker analysis initialises an embedded WebAssembly kernel before decoding the first frame. The worker tries the SIMD-enabled module first, then the scalar WebAssembly module, and finally keeps the existing JavaScript implementation if WebAssembly or Base64 decoding is unavailable. No module is downloaded and no network request is made.
+
+The kernel receives the decoded, full-resolution linear grayscale array and the FITS/XISF saturation thresholds. It returns:
+
+- arithmetic mean of finite pixels
+- sample standard deviation of finite pixels
+- finite-pixel count
+- hard-clipped highlight count
+- near-saturation highlight count
+
+The JavaScript FITS/XISF reader still performs the format-specific work: reading FITS `BITPIX`, `BSCALE`, `BZERO`, and `BLANK`; decoding XISF sample formats and channels; converting colour samples to luminance; and constructing the original pixel array used by the other analysis passes. The WASM result is then passed into the existing distribution, clipping, cloud, noise, and scoring logic.
+
+The result does not change the meaning of a score or any score weight. The WASM implementation follows the same Welford-style mean and variance update used by the JavaScript reader, which avoids losing the small noise signal beneath a large camera pedestal. `analysis_kernel` in CSV identifies the path used: `wasm-simd`, `wasm`, or `javascript`.
+
+The current SIMD module establishes the runtime feature path and vector finite-value probe. The next performance stage remains open: vectorised histograms, tile medians, local-noise maps, and star-window calculations should only be added after benchmarks confirm that they improve real FITS/XISF batches without increasing memory pressure.
 
 The **Stop Analysis** button stops the current run:
 
@@ -2342,6 +2360,7 @@ file
 calculation_version
 analysis_mode
 analysis_pixel_source
+analysis_kernel
 frame_type
 frame_type_source
 filter
@@ -2448,9 +2467,10 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.4.9`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.4.10`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
+- `analysis_kernel`: execution path used for linear pixel statistics: `wasm-simd`, scalar `wasm`, or `javascript` fallback.
 - `frame_type`: detected frame type.
 - `frame_type_source`: FITS keyword, XISF metadata, or file path source.
 - `filter`: detected filter group.

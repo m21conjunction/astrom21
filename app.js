@@ -175,7 +175,13 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.4.9";
+const appVersion = "0.4.10";
+const wasmKernelScalarBase64 =
+  "AGFzbQEAAAABCQFgBH9/fHwBfwMCAQAFAwEAAQcSAgZtZW1vcnkCAAVzdGF0cwAACpQCAZECBAJ/AXwDfwV8QQAhBCABIQVEAAAAAAAAAAAhBkEAIQdBACEIQQAhCQJAA0AgBCAFTw0BIAAqAgC7IQogCiAKYgRABSAHQQFqIQcgCiANoSELIA0gCyAHuKOgIQ0gCiANoSEMIAYgCyAMoqAhBiAKIAJmBEAgCEEBaiEICyAKIANmBEAgCUEBaiEJCwsgAEEEaiEAIARBAWohBAwACwsgB0EASwRAIAdBAUsEQCAGIAdBAWu4oyEOIA5EAAAAAAAAAAClIQ4FRAAAAAAAAAAAIQ4LBUQAAAAAAAAAACENRAAAAAAAAAAAIQ4LQQAgDTkDAEEIIA6fOQMAQRAgBzYCAEEUIAg2AgBBGCAJNgIAQQAL";
+const wasmKernelSimdBase64 =
+  "AGFzbQEAAAABCQFgBH9/fHwBfwMCAQAFAwEAAQcSAgZtZW1vcnkCAAVzdGF0cwAACrYCAbMCBQJ/AXwDfwV8AntBACEEIAEhBUQAAAAAAAAAACEGQQAhB0EAIQhBACEJAkADQCAEIAVPDQEgBEEEaiAFTQRAIAD9AAQAIQ8gDyAP/UIhECAQ/VMaCyAAKgIAuyEKIAogCmIEQAUgB0EBaiEHIAogDaEhCyANIAsgB7ijoCENIAogDaEhDCAGIAsgDKKgIQYgCiACZgRAIAhBAWohCAsgCiADZgRAIAlBAWohCQsLIABBBGohACAEQQFqIQQMAAsLIAdBAEsEQCAHQQFLBEAgBiAHQQFruKMhDiAORAAAAAAAAAAApSEOBUQAAAAAAAAAACEOCwVEAAAAAAAAAAAhDUQAAAAAAAAAACEOC0EAIA05AwBBCCAOnzkDAEEQIAc2AgBBFCAINgIAQRggCTYCAEEACw==";
+let wasmKernelStats = null;
+let wasmKernelMode = "javascript";
 const defaultCsvSeparatorKey = "comma";
 const defaultPreviewStretch = 25;
 const defaultSharpnessMode = "hybrid";
@@ -9097,6 +9103,7 @@ function buildAnalysisResult(file, gray, width, height, previewSource, options =
     sourceFile: file,
     analysisMode,
     analysisPixelSource: options.analysisPixelSource || "working image",
+    analysisKernel: options.analysisKernel || "javascript",
     filterName: filterInfo.name || unknownFilterName,
     filterSource: filterInfo.source || "None",
     frameType: frameTypeInfo.name || unknownFrameTypeName,
@@ -9370,22 +9377,24 @@ async function readFitsFrame(file) {
       continue;
     }
 
-    finitePixels += 1;
-    const delta = scaled - mean;
-    mean += delta / finitePixels;
-    const delta2 = scaled - mean;
-    m2 += delta * delta2;
+    if (!wasmKernelStats) {
+      finitePixels += 1;
+      const delta = scaled - mean;
+      mean += delta / finitePixels;
+      const delta2 = scaled - mean;
+      m2 += delta * delta2;
 
-    if (scaled >= hardThreshold) {
-      clippedHighlights += 1;
-    }
-    if (scaled >= nearThreshold) {
-      nearSaturatedHighlights += 1;
+      if (scaled >= hardThreshold) {
+        clippedHighlights += 1;
+      }
+      if (scaled >= nearThreshold) {
+        nearSaturatedHighlights += 1;
+      }
     }
   }
 
   const variance = finitePixels > 1 ? m2 / (finitePixels - 1) : 0;
-  const basicStats = {
+  const javascriptStats = {
     mean,
     std: Math.sqrt(Math.max(variance, 0)),
     finitePixels,
@@ -9393,6 +9402,8 @@ async function readFitsFrame(file) {
     nearSaturatedHighlights,
     clippingStats: clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights)
   };
+  const kernelStats = wasmKernelStats ? wasmKernelStats(rawGray, hardThreshold, nearThreshold) : null;
+  const basicStats = kernelStats || javascriptStats;
 
   return {
     rawGray,
@@ -9473,22 +9484,24 @@ async function readXisfFrame(file) {
       continue;
     }
 
-    finitePixels += 1;
-    const delta = scaled - mean;
-    mean += delta / finitePixels;
-    const delta2 = scaled - mean;
-    m2 += delta * delta2;
+    if (!wasmKernelStats) {
+      finitePixels += 1;
+      const delta = scaled - mean;
+      mean += delta / finitePixels;
+      const delta2 = scaled - mean;
+      m2 += delta * delta2;
 
-    if (scaled >= hardThreshold) {
-      clippedHighlights += 1;
-    }
-    if (scaled >= nearThreshold) {
-      nearSaturatedHighlights += 1;
+      if (scaled >= hardThreshold) {
+        clippedHighlights += 1;
+      }
+      if (scaled >= nearThreshold) {
+        nearSaturatedHighlights += 1;
+      }
     }
   }
 
   const variance = finitePixels > 1 ? m2 / (finitePixels - 1) : 0;
-  const basicStats = {
+  const javascriptStats = {
     mean,
     std: Math.sqrt(Math.max(variance, 0)),
     finitePixels,
@@ -9496,6 +9509,8 @@ async function readXisfFrame(file) {
     nearSaturatedHighlights,
     clippingStats: clippingStatsFromCounts(finitePixels, clippedHighlights, nearSaturatedHighlights)
   };
+  const kernelStats = wasmKernelStats ? wasmKernelStats(rawGray, hardThreshold, nearThreshold) : null;
+  const basicStats = kernelStats || javascriptStats;
 
   return {
     rawGray,
@@ -9527,6 +9542,7 @@ async function analyzeFitsImageFile(file, analysisMode = getAnalysisMode(), anal
     fullWidth: width,
     fullHeight: height,
     analysisPixelSource: "full-resolution FITS",
+    analysisKernel: typeof wasmKernelMode === "string" ? wasmKernelMode : "javascript",
     metricScale: 1,
     repeatDistanceScale,
     saturationThreshold,
@@ -9558,6 +9574,7 @@ async function analyzeXisfImageFile(file, analysisMode = getAnalysisMode(), anal
     fullWidth: width,
     fullHeight: height,
     analysisPixelSource: "full-resolution XISF",
+    analysisKernel: typeof wasmKernelMode === "string" ? wasmKernelMode : "javascript",
     metricScale: 1,
     repeatDistanceScale,
     saturationThreshold,
@@ -9740,6 +9757,99 @@ function createAnalysisWorkerSource() {
   return `
 const selectedFileMetadata = new WeakMap();
 const appVersion = ${JSON.stringify(appVersion)};
+const wasmKernelScalarBase64 = ${JSON.stringify(wasmKernelScalarBase64)};
+const wasmKernelSimdBase64 = ${JSON.stringify(wasmKernelSimdBase64)};
+let wasmKernelStats = null;
+let wasmKernelMode = "javascript";
+let wasmKernelInitialized = false;
+let wasmKernelMemory = null;
+let wasmKernelCapacityBytes = 0;
+
+function decodeWasmBase64(value) {
+  if (typeof atob !== "function") {
+    throw new Error("Base64 decoding is unavailable.");
+  }
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function initializeWasmKernel() {
+  if (wasmKernelInitialized) {
+    return wasmKernelMode;
+  }
+  wasmKernelInitialized = true;
+  if (typeof WebAssembly === "undefined" || typeof WebAssembly.instantiate !== "function") {
+    return wasmKernelMode;
+  }
+
+  const candidates = [
+    ["wasm-simd", wasmKernelSimdBase64],
+    ["wasm", wasmKernelScalarBase64]
+  ];
+  for (const [mode, encoded] of candidates) {
+    try {
+      const compiled = await WebAssembly.instantiate(decodeWasmBase64(encoded), {});
+      const memory = compiled.instance && compiled.instance.exports ? compiled.instance.exports.memory : null;
+      const stats = compiled.instance && compiled.instance.exports ? compiled.instance.exports.stats : null;
+      if (!memory || typeof stats !== "function") {
+        continue;
+      }
+      wasmKernelMemory = memory;
+      wasmKernelCapacityBytes = memory.buffer.byteLength;
+      wasmKernelMode = mode;
+      wasmKernelStats = (gray, hardThreshold, nearThreshold) => {
+        try {
+          const inputOffset = 64;
+          const requiredBytes = inputOffset + gray.byteLength;
+          const requiredPages = Math.ceil(requiredBytes / 65536);
+          const currentPages = Math.floor(memory.buffer.byteLength / 65536);
+          if (requiredPages > currentPages) {
+            memory.grow(requiredPages - currentPages);
+            wasmKernelCapacityBytes = memory.buffer.byteLength;
+          }
+          new Float32Array(memory.buffer, inputOffset, gray.length).set(gray);
+          const resultPointer = stats(
+            inputOffset,
+            gray.length,
+            Number.isFinite(hardThreshold) ? hardThreshold : Number.POSITIVE_INFINITY,
+            Number.isFinite(nearThreshold) ? nearThreshold : Number.POSITIVE_INFINITY
+          );
+          const view = new DataView(memory.buffer);
+          const finitePixels = view.getInt32(resultPointer + 16, true);
+          const clippedHighlights = view.getInt32(resultPointer + 20, true);
+          const nearSaturatedHighlights = view.getInt32(resultPointer + 24, true);
+          return {
+            mean: view.getFloat64(resultPointer, true),
+            std: view.getFloat64(resultPointer + 8, true),
+            finitePixels,
+            clippedHighlights,
+            nearSaturatedHighlights,
+            clippingStats: clippingStatsFromCounts(
+              finitePixels,
+              clippedHighlights,
+              nearSaturatedHighlights
+            )
+          };
+        } catch (error) {
+          wasmKernelStats = null;
+          wasmKernelMode = "javascript";
+          return null;
+        }
+      };
+      return wasmKernelMode;
+    } catch (error) {
+      // Try the scalar module, then leave the existing JavaScript path active.
+    }
+  }
+  wasmKernelMemory = null;
+  wasmKernelCapacityBytes = 0;
+  return wasmKernelMode;
+}
+
 const defaultAnalysisMode = ${JSON.stringify(defaultAnalysisMode)};
 const unknownFilterName = ${JSON.stringify(unknownFilterName)};
 const unknownFrameTypeName = ${JSON.stringify(unknownFrameTypeName)};
@@ -9856,6 +9966,7 @@ self.onmessage = async (event) => {
 
   try {
     const file = message.file;
+    await initializeWasmKernel();
     selectedFileMetadata.set(file, message.metadata || {});
     const analysisMode = normalizeAnalysisMode(message.analysisMode);
     const analysisConfig = getAnalysisModeConfig(analysisMode);
@@ -10474,6 +10585,7 @@ function exportCsv() {
     "calculation_version",
     "analysis_mode",
     "analysis_pixel_source",
+    "analysis_kernel",
     "frame_type",
     "frame_type_source",
     "filter",
@@ -10631,6 +10743,7 @@ function exportCsv() {
       result.calculationVersion || appVersion,
       resultAnalysisMode(result),
       result.analysisPixelSource || "",
+      result.analysisKernel || "javascript",
       result.frameType || unknownFrameTypeName,
       result.frameTypeSource || "None",
       result.filterName || unknownFilterName,

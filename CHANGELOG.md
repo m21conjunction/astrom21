@@ -1,5 +1,13 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.10 - 2026-10-01
+
+- Added an embedded WebAssembly pixel-statistics kernel for full-resolution FITS/XISF analysis.
+- Workers try the SIMD-enabled kernel, then scalar WASM, with the existing JavaScript path as a compatibility fallback.
+- Added `analysis_kernel` to CSV export so analysis runs can be compared across environments.
+- Kept the existing score formulas, thresholds, and weights unchanged.
+- Added the release wishlist item for bundle/minify and platform code-signing work.
+
 ## 0.4.9 - 2026-09-30
 
 - Separated Moon-explained smooth background lift from transient cloud residuals.

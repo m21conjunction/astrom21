@@ -69,6 +69,8 @@ function mainContext() {
     Element: function Element() {},
     HTMLInputElement: function HTMLInputElement() {},
     CustomEvent: function CustomEvent() {},
+    atob,
+    WebAssembly,
     setTimeout,
     clearTimeout,
     setInterval,
@@ -148,6 +150,8 @@ async function run() {
     },
     TextDecoder,
     DOMParser: function DOMParser() {},
+    atob,
+    WebAssembly,
     performance,
     setTimeout,
     clearTimeout
@@ -171,7 +175,8 @@ async function run() {
   const message = await posted;
   assert.equal(message.type, "result", message.error || "worker result expected");
   const result = message.result;
-  assert.equal(result.calculationVersion, "0.4.9");
+  assert.equal(result.calculationVersion, "0.4.10");
+  assert.ok(["wasm-simd", "wasm"].includes(result.analysisKernel), `expected WASM kernel, got ${result.analysisKernel}`);
   assert.equal(result.frameType, "Light");
   assert.equal(result.sourceFolder, "TestNight");
   assert.equal(result.observationTimeUtc, "2026-01-03T10:02:30.000Z");

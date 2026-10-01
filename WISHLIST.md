@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-09-30
-Current app version: 0.4.9
+Updated: 2026-10-01
+Current app version: 0.4.10
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -28,7 +28,7 @@ Best options:
 
 5. **WASM/SIMD**
    Move heavy pixel loops to WebAssembly later. That could be much faster than JavaScript for full-frame FITS/XISF math.
-   Status: open.
+   Status: initial implementation in v0.4.10. Worker analysis now uses an embedded SIMD-enabled WASM kernel when supported, falls back to scalar WASM, and finally falls back to the existing JavaScript path. The kernel covers full-resolution FITS/XISF mean, standard deviation, hard clipping, and near-saturation statistics. Broader vectorisation of histograms, tile medians, noise maps, and star detection remains open and should be benchmark-driven.
 
 6. **Worker Pool**
    Analyse several images in parallel, but cap it carefully, maybe 2 to 4 large FITS/XISF frames at once, otherwise memory becomes the bottleneck.
@@ -122,3 +122,7 @@ Best options:
    Show Moon illumination, phase/age, altitude, azimuth, and Moon-to-target angular separation when the Light frame has usable RA/DEC coordinates. Location is not needed for the illuminated fraction itself, but it is required to determine whether the Moon was above the local horizon and how strongly it could affect the photographed field.
    Add the Moon data to frame details, session comparisons, and CSV export. Derive a filter-aware moonlight-risk indicator: broadband/OSC frames are generally more sensitive, while narrowband filters such as Ha and SII are less affected. The optional penalty must remain opt-in and should continue to be evaluated against real labelled batches.
    Remaining work: optional saved target coordinates when RA/DEC is missing; an optional bundled offline city list; and WCS-aware image-gradient direction so a background gradient pointing away from the Moon can become supporting evidence.
+
+24. **Release Bundle, Minification, And Code Signing**
+   Before distributing the Electron package, bundle and minify the JavaScript, remove development source maps from production artefacts, keep the WASM modules reproducible from their `.wat` sources, and document third-party licences. Code-sign the macOS, Windows, and Linux deliverables where the platform supports it, and verify signatures as part of release testing. This should complement, not replace, offline licence-key protection and local calculation-version reporting.
+   Status: open; planned for the desktop packaging phase.

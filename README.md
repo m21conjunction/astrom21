@@ -1,6 +1,6 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.4.9**.
+Current app version: **0.4.10**.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -10,6 +10,7 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Provides a remembered interface-language selector for International English, Spanish, Italian, French, and German
 - After results exist, newly added folders are analysed incrementally; existing measurements are kept and only new frames are decoded
 - Runs heavy per-frame measurements in a local Web Worker pool when the browser supports it, with a main-thread fallback
+- Uses an embedded WASM pixel-statistics kernel in workers when supported: SIMD first, scalar WASM second, and JavaScript fallback last
 - Uses full-resolution FITS/XISF pixels, while keeping Standard fast with sampled expensive passes and local star-window measurements
 - Adds **Stop Analysis** for very large batches; completed frames are kept and queued/active worker jobs are cancelled
 - Scores each image using:
@@ -49,13 +50,13 @@ This app runs fully offline in your browser and ranks astronomy images by qualit
 - Remembers the scoring, preview, and magnifier lens stretch sliders, plus the sharpness mode, on the same browser
 - Can restore the default percentage values from the toolbar
 - Shows help markers beside the core scoring controls with calculation notes
-- Exports a CSV report with all analysis parameters, including calculation version and analysis pixel source
+- Exports a CSV report with all analysis parameters, including calculation version, analysis pixel source, and analysis kernel
 - Groups Moon context by observing session, object shot, filter, and site; calculates illumination, phase, altitude, azimuth, target separation, and filter-aware potential exposure fully offline
 - Compares Moon plausibility with median-based background structure, lift, and relative star loss to distinguish clear evidence, Moonlight, Moonlit cloud, cloud without strong Moon exposure, and other brightening
 - Offers a numeric **Maximum Moon Penalty** setting, `0%` by default. Moon and cloud impacts are estimated separately: smooth predictable lift supports the Moon component, while transient same-object/filter residuals support the cloud component. Both may contribute when appropriate, with a combined sky-penalty cap
 - Lists observing coordinates detected in FITS/XISF headers and lets the user save or update a local name that is reused automatically for matching coordinates
 
-Version `0.4.9` separates Moon-explained smooth background lift from transient cloud residuals. Moon and cloud penalties can now both apply to a frame, while a combined sky-penalty cap prevents excessive double counting. The UI and CSV expose the separate Moon impact and cloud residual evidence. Version `0.4.8` replaces the median-lift multiplier with a batch-residual cloud detector. It compares nearby same-object/filter frames using tile-pattern, background, star-count, and noise changes, so both bright and dark cloud events can be detected while stable gradients are suppressed. Version `0.4.7` was an interim median-lift weighting experiment. Version `0.4.6` restores more full-preview image area by replacing the repeated full metadata grid with a compact inspection strip. Version `0.4.5` lets header-detected observing coordinates be saved under a user-provided name without replacing the authoritative header coordinates. Version `0.4.4` replaced the Moon-penalty checkbox and fixed exposure-band caps with a user-entered maximum percentage. `0%` disables the penalty. Version `0.4.2` added session-aware Moon geometry, per-folder saved observing sites, and explanatory Moon/sky context. Version `0.4.0` added the multilingual interface; the approved terminology is listed in [TRANSLATIONS.md](TRANSLATIONS.md).
+Version `0.4.10` adds the first WASM/SIMD kernel for full-resolution FITS/XISF mean, standard deviation, clipping, and near-saturation statistics. The worker records `analysis_kernel` as `wasm-simd`, `wasm`, or `javascript`; the calculation meaning and score formulas remain unchanged. Version `0.4.9` separates Moon-explained smooth background lift from transient cloud residuals. Moon and cloud penalties can now both apply to a frame, while a combined sky-penalty cap prevents excessive double counting. The UI and CSV expose the separate Moon impact and cloud residual evidence. Version `0.4.8` replaces the median-lift multiplier with a batch-residual cloud detector. It compares nearby same-object/filter frames using tile-pattern, background, star-count, and noise changes, so both bright and dark cloud events can be detected while stable gradients are suppressed. Version `0.4.7` was an interim median-lift weighting experiment. Version `0.4.6` restores more full-preview image area by replacing the repeated full metadata grid with a compact inspection strip. Version `0.4.5` lets header-detected observing coordinates be saved under a user-provided name without replacing the authoritative header coordinates. Version `0.4.4` replaced the Moon-penalty checkbox and fixed exposure-band caps with a user-entered maximum percentage. `0%` disables the penalty. Version `0.4.2` added session-aware Moon geometry, per-folder saved observing sites, and explanatory Moon/sky context. Version `0.4.0` added the multilingual interface; the approved terminology is listed in [TRANSLATIONS.md](TRANSLATIONS.md).
 
 All processing happens locally on your machine. No cloud calls are used.
 
