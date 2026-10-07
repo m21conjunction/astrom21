@@ -1,0 +1,5 @@
+@@ -367,2 +367,4 @@
+   clipWeight: 10
+ };
++const defaultFwhmThreshold = 4;
++const defaultEccentricityThreshold = 0.65;

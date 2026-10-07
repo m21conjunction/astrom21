@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Calculation Description
 
-Updated: 2026-10-01
+Updated: 2026-10-07
 
-Current app version: **0.4.10**.
+Current app version: **0.4.14**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -503,6 +503,12 @@ axis_roundness = average(sqrt(minor_variance / major_variance))
 ```
 
 It is kept in the CSV to show the moment-shape part of the roundness calculation.
+
+### Image-Level FWHM
+
+CSV field: `fwhm`.
+
+The image-level FWHM is the median of the measured major-axis FWHM values from all detected stars. It is expressed in pixels on the analysed image grid. Smaller values generally indicate tighter stars, but FWHM is interpreted together with HFR, roundness, focus conditions, sampling, and the telescope/camera scale. Calibration frames report this light-only field as `skipped`.
 
 ### Eccentricity
 
@@ -1421,6 +1427,8 @@ Unknown: 70
 
 Users can change these with per-filter numeric entry boxes.
 
+The controls **Maximum FWHM** and **Maximum Eccentricity** are remembered hard discard gates for Light frames. Their defaults are `4.0 px` and `0.65`. The FWHM gate compares the image-level median major-axis FWHM in pixels; the eccentricity gate compares the image-level median star eccentricity. A frame that exceeds either limit is forced to `Discard`, regardless of the other accumulated score components, and its displayed quality score is set to `0`. The score breakdown retains the unpenalised components and records a hard-gate penalty. When the user relaxes the threshold, scoring is recomputed from the stored measurements and the normal score returns.
+
 The keeper thresholds do not change between Standard and Expert analysis modes. If Expert reports more keepers than Standard, the cause is changed measurements or penalties, not a looser keeper rule. Typical causes are a deeper star sample improving HFR/roundness, a more stable noise estimate, fewer false tracking/cloud penalties, or a different relative star-count normalisation inside the same object-shot/filter group.
 
 For light frames:
@@ -1438,11 +1446,18 @@ Keep if:
     clipping_pressure < 1
     tracking_severity is not Severe
     tracking_severity is not Possible
+    fwhm <= maximum_fwhm_threshold
+    eccentricity <= maximum_eccentricity_threshold
 
 Review if:
     quality >= review_threshold
+    fwhm <= maximum_fwhm_threshold
+    eccentricity <= maximum_eccentricity_threshold
 
-Discard otherwise
+Discard if:
+    fwhm > maximum_fwhm_threshold
+    or eccentricity > maximum_eccentricity_threshold
+    or quality < review_threshold
 ```
 
 ## Calibration Frame Scoring
@@ -2429,6 +2444,7 @@ star_roundness
 fwhm_roundness
 axis_roundness
 eccentricity
+fwhm
 hfr
 star_count
 mean
@@ -2467,7 +2483,7 @@ elongation
 Short meanings:
 
 - `file`: relative folder path or filename.
-- `calculation_version`: app/calculation version that produced this row, such as `0.4.10`.
+- `calculation_version`: app/calculation version that produced this row, such as `0.4.13`.
 - `analysis_mode`: `standard` or `expert`, showing which processing mode produced the measurements.
 - `analysis_pixel_source`: source grid used for measurements, such as `full-resolution FITS`, `full-resolution XISF`, or `bitmap analysis canvas`.
 - `analysis_kernel`: execution path used for linear pixel statistics: `wasm-simd`, scalar `wasm`, or `javascript` fallback.
@@ -2539,6 +2555,7 @@ Short meanings:
 - `fwhm_roundness`: FWHM minor/major ratio.
 - `axis_roundness`: moment-shape minor/major ratio.
 - `eccentricity`: median star eccentricity.
+- `fwhm`: median major-axis FWHM in pixels.
 - `hfr`: median star half-flux radius estimate.
 - `star_count`: detected star count for light-frame analysis. For calibration frames this raw exported value is only a local-peak count and should not be interpreted as stars.
 - `mean`: average grayscale brightness.
@@ -2705,7 +2722,7 @@ Naming a detected site changes only the display name and CSV `site_name`. The or
 
 ### Sessions And Mixed Batches
 
-Dated Light frames are ordered by UTC midpoint. A gap greater than eight hours starts a new observing session, avoiding an artificial split at midnight. Session cards are additionally separated by object-shot group, filter, and site. Keep/Review/Discard filtering does not redefine the context group, while frame-type, filter, and object-shot tabs control which context cards are displayed.
+Dated Light frames are ordered by UTC midpoint. A gap greater than eight hours starts a new observing session. A continuous session crossing midnight keeps the night key of its first frame, so a typical 21:00-05:00 sequence produces one Moon card. Moon cards are grouped by observing night and site, not by object-shot group or filter. Keep/Review/Discard filtering does not redefine the context group, while frame-type, filter, and object-shot tabs control which result frames are displayed.
 
 ### Potential Moon Exposure
 
@@ -2789,7 +2806,7 @@ Fractions below `0.002` (less than `0.2%`) are treated as too small to affect th
 
 ### Display And Export
 
-Each session/object/filter/site card shows a representative phase pictogram, UTC range, frame count, site, illumination range, Moon altitude, target separation, Potential Moon Exposure, and sky interpretation. Each Light frame also displays UTC, Moon Lit, Moon Phase, Moon Age, Site, Moon Alt, Moon Sep, Moon Exposure, Moon Impact, and Sky.
+The Moon Impact panel shows one card per observing night and site. It contains one representative phase pictogram, the UTC range, frame count, site, applied Moon score-impact range plus its variation during the night, and the context that explains it: Moon illumination and phase, Moon-altitude range, Moon-target separation range, and potential exposure. The card also gives a plain-language reason, such as a nearly full Moon remaining below the horizon, low exposure caused by geometry or filter sensitivity, no measurable Moon-explained background lift, a disabled optional penalty, or a confirmed applied impact. A continuous session crossing midnight remains one night card. The detailed Moon measurements remain available in CSV; Moon card display is intentionally not repeated per frame, object, or filter.
 
 CSV adds:
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Astronomy Sub Analyser</title>
-    <link rel="stylesheet" href="./styles.css?v=0.4.10">
+    <link rel="stylesheet" href="./styles.css?v=0.4.14">
   </head>
   <body>
     <main class="app">
@@ -26,7 +26,7 @@
             </select>
           </label>
           <div class="header-status">
-            <span>v0.4.10</span>
+            <span>v0.4.14</span>
             <span data-i18n="brand.offline">On-premise</span>
             <span>FITS/XISF</span>
           </div>
@@ -82,6 +82,16 @@
             <button class="help-button" type="button" aria-label="Clipping penalty calculation" data-i18n-aria-label="help.clippingLabel" data-help="Clipping uses hard-clipped pixels plus near-saturated highlights. FITS/XISF clipping is measured from full-resolution linear data before preview downsampling. Small saturated star cores can now reduce this score." data-i18n-help="help.clipping">?</button>
           </div>
           <input id="clipWeight" type="range" min="5" max="40" value="10">
+          <div class="control-label-line">
+            <label for="fwhmThreshold"><span data-i18n="controls.fwhmThreshold">Maximum FWHM</span> <span id="fwhmThresholdValue">4.0 px</span></label>
+            <button class="help-button" type="button" aria-label="FWHM threshold calculation" data-i18n-aria-label="help.fwhmThresholdLabel" data-help="A Light frame passes this gate when its median major-axis FWHM is at or below the selected value. The default is 4.0 pixels." data-i18n-help="help.fwhmThreshold">?</button>
+          </div>
+          <input id="fwhmThreshold" type="range" min="1" max="12" step="0.1" value="4.0">
+          <div class="control-label-line">
+            <label for="eccentricityThreshold"><span data-i18n="controls.eccentricityThreshold">Maximum Eccentricity</span> <span id="eccentricityThresholdValue">0.65</span></label>
+            <button class="help-button" type="button" aria-label="Eccentricity threshold calculation" data-i18n-aria-label="help.eccentricityThresholdLabel" data-help="A Light frame passes this gate when its median star eccentricity is at or below the selected value. The default is 0.65." data-i18n-help="help.eccentricityThreshold">?</button>
+          </div>
+          <input id="eccentricityThreshold" type="range" min="0.10" max="0.95" step="0.01" value="0.65">
           <label for="previewStretch"><span data-i18n="controls.previewStretch">Preview Stretch</span> <span id="previewStretchValue">25%</span></label>
           <input id="previewStretch" type="range" min="0" max="100" value="25">
         </div>
@@ -135,10 +145,10 @@
       <section class="moon-illumination-panel" id="moonIlluminationPanel" hidden>
         <div class="moon-context-header">
           <div>
-            <p class="section-label" data-i18n="moon.title">Moon &amp; Sky Context</p>
-            <p class="moon-illumination-explanation" data-i18n="moon.explanation">Each observing session is evaluated separately. Potential Moon Exposure uses Moon illumination, altitude, target separation, and filter. It does not change a score by itself; the optional penalty also requires a smooth median-background lift.</p>
+            <p class="section-label" data-i18n="moon.title">Moon Impact</p>
+            <p class="moon-illumination-explanation" data-i18n="moon.explanation">Moon impact is shown once per observing night. The range reports how the applied Moon score reduction varied during that night. Detailed astronomical context remains available in CSV.</p>
           </div>
-          <span class="moon-context-only" data-i18n="moon.contextOnly">Context + optional penalty</span>
+          <span class="moon-context-only" data-i18n="moon.contextOnly">Scoring context</span>
         </div>
         <div class="moon-session-list" id="moonSessionList"></div>
         <details class="moon-site-manager" id="moonSiteManager">
@@ -245,8 +255,8 @@
         <div class="zoom-metrics" id="zoomMetrics"></div>
       </section>
     </div>
-    <script src="./moon-calculation.js?v=0.4.10"></script>
-    <script src="./i18n.js?v=0.4.10"></script>
-    <script src="./app.js?v=0.4.10"></script>
+    <script src="./moon-calculation.js?v=0.4.14"></script>
+    <script src="./i18n.js?v=0.4.14"></script>
+    <script src="./app.js?v=0.4.14"></script>
   </body>
 </html>

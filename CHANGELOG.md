@@ -1,5 +1,27 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.14 - 2026-10-07
+
+- FWHM and eccentricity threshold failures now set the displayed Light-frame score to `0` as a hard penalty.
+- Changing the thresholds recomputes the frame from its original measurements, restoring the normal score when the frame passes.
+
+## 0.4.13 - 2026-10-07
+
+- FWHM and eccentricity thresholds now force Light frames to Discard when exceeded, while retaining the numeric score for diagnosis.
+
+## 0.4.12 - 2026-10-07
+
+- Added Moon illumination, phase, altitude range, target-separation range, and potential-exposure details to each observing-night card.
+- Added plain-language explanations for low or zero Moon impact, including the below-horizon case, disabled penalty, low geometric/filter exposure, and missing Moon-explained background lift.
+- Documented the Moon penalty calculation alongside the new display details.
+
+## 0.4.11 - 2026-10-06
+
+- Reduced the on-image Moon metadata to the score-relevant Moon impact; detailed astronomical fields remain available in CSV export.
+- Grouped the Moon panel by observing night and site, keeping a continuous cross-midnight session as one night and showing the impact variation during it.
+- Added remembered Maximum FWHM and Maximum Eccentricity Light-frame keeper gates, defaulting to `4.0 px` and `0.65`, with frame warnings when a gate is exceeded.
+- Added image-level median major-axis FWHM to result cards, zoom metrics, and CSV export.
+
 ## 0.4.10 - 2026-10-01
 
 - Added an embedded WebAssembly pixel-statistics kernel for full-resolution FITS/XISF analysis.

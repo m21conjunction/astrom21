@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-10-01
-Current app version: 0.4.10
+Updated: 2026-10-06
+Current app version: 0.4.11
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 

@@ -39,6 +39,8 @@ function mainContext() {
     starsWeight: "20",
     starCountWeight: "15",
     clipWeight: "10",
+    fwhmThreshold: "4.0",
+    eccentricityThreshold: "0.65",
     previewStretch: "25"
   };
   const document = {
@@ -175,7 +177,7 @@ async function run() {
   const message = await posted;
   assert.equal(message.type, "result", message.error || "worker result expected");
   const result = message.result;
-  assert.equal(result.calculationVersion, "0.4.10");
+  assert.equal(result.calculationVersion, "0.4.14");
   assert.ok(["wasm-simd", "wasm"].includes(result.analysisKernel), `expected WASM kernel, got ${result.analysisKernel}`);
   assert.equal(result.frameType, "Light");
   assert.equal(result.sourceFolder, "TestNight");
@@ -195,14 +197,51 @@ async function run() {
   assert.ok(Number.isFinite(result.targetAltitudeDegrees));
   assert.ok(Number.isFinite(result.moonExposureScore));
   assert.notEqual(result.moonExposureKey, "unavailable");
-  assert.equal(result.observationSessionLabel, "2026-01-03 UTC");
+  assert.equal(result.observationSessionLabel, "Night of 2026-01-02 UTC");
   const zoomLabels = JSON.parse(vm.runInContext("JSON.stringify(zoomMetricItems(testResult).map((item) => item[0]))", main));
-  assert.equal(zoomLabels.length, 12);
+  assert.equal(zoomLabels.length, 13);
   assert.ok(zoomLabels.includes("Status"));
+  assert.ok(zoomLabels.includes("FWHM"));
   assert.ok(zoomLabels.includes("HFR"));
   assert.ok(zoomLabels.includes("Tracking"));
   assert.ok(!zoomLabels.includes("RA"));
   assert.ok(!zoomLabels.includes("Moon Phase"));
+
+  main.gateResult = {
+    ...result,
+    frameType: "Light",
+    quality: 90,
+    filterName: "L",
+    starCount: 100,
+    fwhm: 4.0,
+    eccentricity: 0.65,
+    elongation: 1,
+    clippingPressure: 0,
+    clipping: 0,
+    trackingSeverity: "None"
+  };
+  assert.equal(vm.runInContext("recommendationFor(gateResult)", main), "Keep");
+  main.gateResult.fwhm = 4.01;
+  assert.equal(vm.runInContext("recommendationFor(gateResult)", main), "Discard");
+  assert.equal(vm.runInContext("qualityClass(gateResult)", main), "quality-low");
+  assert.equal(
+    vm.runInContext(
+      "applyLightQualityThresholdPenalty(0.9, gateResult, []).toFixed(1)",
+      main
+    ),
+    "0.0"
+  );
+  assert.equal(
+    vm.runInContext(
+      "fwhmThreshold.value = '5.0'; applyLightQualityThresholdPenalty(0.9, gateResult, []).toFixed(1)",
+      main
+    ),
+    "0.9"
+  );
+  vm.runInContext("fwhmThreshold.value = '4.0'", main);
+  main.gateResult.fwhm = 4.0;
+  main.gateResult.eccentricity = 0.66;
+  assert.equal(vm.runInContext("recommendationFor(gateResult)", main), "Discard");
 
   const headerSiteSource = result.siteSource;
   vm.runInContext(
@@ -228,6 +267,13 @@ async function run() {
   const detectedSiteHtml = vm.runInContext("document.getElementById('moonDetectedSites').innerHTML", main);
   assert.match(detectedSiteHtml, /Renamed Observatory/);
   assert.match(detectedSiteHtml, /Update Name/);
+
+  const crossMidnightResult = { ...result, fileKey: "cross-midnight", observationTimestampMs: Date.parse("2026-01-03T23:30:00Z") };
+  const afterMidnightResult = { ...result, fileKey: "after-midnight", observationTimestampMs: Date.parse("2026-01-04T02:30:00Z") };
+  main.crossNightResults = [crossMidnightResult, afterMidnightResult];
+  vm.runInContext("assignObservationSessions(crossNightResults)", main);
+  assert.equal(crossMidnightResult.observationSessionKey, afterMidnightResult.observationSessionKey);
+  assert.equal(crossMidnightResult.observationSessionLabel, "Night of 2026-01-03 UTC");
 
   const laterResult = { ...result, observationTimestampMs: result.observationTimestampMs + 9 * 60 * 60 * 1000 };
   main.sessionResults = [result, laterResult];

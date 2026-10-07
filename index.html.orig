@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Astronomy Sub Analyser</title>
+    <link rel="stylesheet" href="./styles.css?v=0.4.10">
+  </head>
+  <body>
+    <main class="app">
+      <header class="app-header">
+        <img class="app-logo" src="./assets/logo-moon-conjunction.png" alt="Moon Conjunction logo" data-i18n-alt="brand.logoAlt">
+        <div class="brand-block">
+          <p class="app-kicker" data-i18n="brand.kicker">Local frame review</p>
+          <h1>Astronomy Sub Analyser</h1>
+        </div>
+        <div class="header-tools">
+          <label class="language-control" for="languageSelect">
+            <span data-i18n="language.label">Language</span>
+            <select id="languageSelect" aria-label="Interface language" data-i18n-aria-label="language.ariaLabel">
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="it">Italiano</option>
+              <option value="fr">Français</option>
+              <option value="de">Deutsch</option>
+            </select>
+          </label>
+          <div class="header-status">
+            <span>v0.4.10</span>
+            <span data-i18n="brand.offline">On-premise</span>
+            <span>FITS/XISF</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <div class="toolbar-group">
+          <label class="input-label" for="folderInput" data-i18n="folders.title">Image Folders</label>
+          <div class="folder-picker">
+            <input id="folderInput" class="folder-input" type="file" accept="image/*,.tif,.tiff,.fit,.fits,.fts,.xisf" multiple webkitdirectory directory>
+            <label class="folder-picker-button" for="folderInput" data-i18n="folders.add">Add Folder</label>
+            <button id="clearFoldersBtn" class="folder-clear-button" type="button" disabled data-i18n="folders.clear">Clear Folders</button>
+            <span class="folder-file-count" id="folderFileCount" data-i18n="folders.none">No folders selected</span>
+          </div>
+          <div class="selected-folder-list" id="selectedFolderList" aria-label="Selected folders" data-i18n-aria-label="folders.selected" hidden></div>
+        </div>
+        <div class="toolbar-group sliders">
+          <div class="control-label-line">
+            <label for="sharpnessWeight"><span data-i18n="controls.sharpness">Sharpness</span> <span id="sharpnessWeightValue">40%</span></label>
+            <button class="help-button" type="button" aria-label="Sharpness calculation" data-i18n-aria-label="help.sharpnessLabel" data-help="Sharpness is relative to the current filter group. FITS/XISF files are measured from linear image data, not the stretched preview. Star sharpness blends FWHM and HFR, rewarding smaller/tighter stars. Hybrid adds 25% whole-image edge contrast." data-i18n-help="help.sharpness">?</button>
+          </div>
+          <input id="sharpnessWeight" type="range" min="10" max="60" value="40">
+          <div class="mode-control">
+            <div class="control-label-line">
+              <span class="mode-label" data-i18n="controls.sharpnessMode">Sharpness Mode</span>
+              <button class="help-button" type="button" aria-label="Hybrid and FWHM mode calculation" data-i18n-aria-label="help.sharpnessModeLabel" data-help="Hybrid is usually steadier because it uses star FWHM/HFR plus image edge contrast. FWHM Only ignores global edge contrast and ranks sharpness only from measured star size." data-i18n-help="help.sharpnessMode">?</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Sharpness mode" data-i18n-aria-label="controls.sharpnessMode">
+              <input id="sharpnessModeHybrid" type="radio" name="sharpnessMode" value="hybrid" checked>
+              <label for="sharpnessModeHybrid" data-i18n="controls.hybrid">Hybrid</label>
+              <input id="sharpnessModeFwhm" type="radio" name="sharpnessMode" value="fwhm">
+              <label for="sharpnessModeFwhm" data-i18n="controls.fwhmOnly">FWHM Only</label>
+            </div>
+          </div>
+          <div class="control-label-line">
+            <label for="noiseWeight"><span data-i18n="controls.noisePenalty">Noise Penalty</span> <span id="noiseWeightValue">15%</span></label>
+            <button class="help-button" type="button" aria-label="Noise penalty calculation" data-i18n-aria-label="help.noiseLabel" data-help="Noise is estimated from dim, non-star background pixels by comparing each pixel to its local 3x3 neighbourhood. More background residual lowers the final quality score." data-i18n-help="help.noise">?</button>
+          </div>
+          <input id="noiseWeight" type="range" min="5" max="60" value="15">
+          <div class="control-label-line">
+            <label for="starsWeight"><span data-i18n="controls.roundness">Roundness</span> <span id="starsWeightValue">20%</span></label>
+            <button class="help-button" type="button" aria-label="Roundness calculation" data-i18n-aria-label="help.roundnessLabel" data-help="Roundness is scored directly: 100% means circular stars. It uses all detected stars and blends 75% FWHM minor/major ratio with 25% moment-based shape." data-i18n-help="help.roundness">?</button>
+          </div>
+          <input id="starsWeight" type="range" min="10" max="60" value="20">
+          <div class="control-label-line">
+            <label for="starCountWeight"><span data-i18n="controls.starCount">Star Count</span> <span id="starCountWeightValue">15%</span></label>
+            <button class="help-button" type="button" aria-label="Star count calculation" data-i18n-aria-label="help.starCountLabel" data-help="Star Count compares each image against the current filter group. If a sub has many fewer detected stars than same-filter frames, it loses score, which helps catch clouds, haze, fog, or dawn glow." data-i18n-help="help.starCount">?</button>
+          </div>
+          <input id="starCountWeight" type="range" min="0" max="40" value="15">
+          <div class="control-label-line">
+            <label for="clipWeight"><span data-i18n="controls.clippingPenalty">Clipping Penalty</span> <span id="clipWeightValue">10%</span></label>
+            <button class="help-button" type="button" aria-label="Clipping penalty calculation" data-i18n-aria-label="help.clippingLabel" data-help="Clipping uses hard-clipped pixels plus near-saturated highlights. FITS/XISF clipping is measured from full-resolution linear data before preview downsampling. Small saturated star cores can now reduce this score." data-i18n-help="help.clipping">?</button>
+          </div>
+          <input id="clipWeight" type="range" min="5" max="40" value="10">
+          <div class="control-label-line">
+            <label for="fwhmThreshold"><span data-i18n="controls.fwhmThreshold">Maximum FWHM</span> <span id="fwhmThresholdValue">4.0 px</span></label>
+            <button class="help-button" type="button" aria-label="FWHM threshold calculation" data-i18n-aria-label="help.fwhmThresholdLabel" data-help="A Light frame passes this gate when its median major-axis FWHM is at or below the selected value. The default is 4.0 pixels." data-i18n-help="help.fwhmThreshold">?</button>
+          </div>
+          <input id="fwhmThreshold" type="range" min="1" max="12" step="0.1" value="4.0">
+          <div class="control-label-line">
+            <label for="eccentricityThreshold"><span data-i18n="controls.eccentricityThreshold">Maximum Eccentricity</span> <span id="eccentricityThresholdValue">0.65</span></label>
+            <button class="help-button" type="button" aria-label="Eccentricity threshold calculation" data-i18n-aria-label="help.eccentricityThresholdLabel" data-help="A Light frame passes this gate when its median star eccentricity is at or below the selected value. The default is 0.65." data-i18n-help="help.eccentricityThreshold">?</button>
+          <label for="previewStretch"><span data-i18n="controls.previewStretch">Preview Stretch</span> <span id="previewStretchValue">25%</span></label>
+          <input id="previewStretch" type="range" min="0" max="100" value="25">
+        </div>
+        <div class="toolbar-group actions">
+          <div class="mode-control analysis-mode-control">
+            <div class="control-label-line">
+              <span class="mode-label" data-i18n="controls.analysisMode">Analysis Mode</span>
+              <button class="help-button" type="button" aria-label="Analysis mode calculation depth" data-i18n-aria-label="help.analysisModeLabel" data-help="FITS/XISF measurements use full-resolution pixels in both modes. Standard stays faster with lighter sampling budgets; Expert uses deeper budgets for star size, roundness, drift, clouds, halos, flats, and histograms. Switching modes re-measures frames on the next Analyse run." data-i18n-help="help.analysisMode">?</button>
+            </div>
+            <div class="segmented" role="group" aria-label="Analysis mode" data-i18n-aria-label="controls.analysisMode">
+              <input id="analysisModeStandard" type="radio" name="analysisMode" value="standard" checked>
+              <label for="analysisModeStandard" data-i18n="controls.standard">Standard</label>
+              <input id="analysisModeExpert" type="radio" name="analysisMode" value="expert">
+              <label for="analysisModeExpert" data-i18n="controls.expert">Expert</label>
+            </div>
+          </div>
+          <button id="analyzeBtn" type="button" data-i18n="actions.analyse">Analyse</button>
+          <button id="stopAnalyzeBtn" class="stop-analysis-button" type="button" hidden disabled data-i18n="actions.stop">Stop Analysis</button>
+          <button id="resetDefaultsBtn" type="button" data-i18n="actions.defaults">Default Percentages</button>
+          <label class="toolbar-check" for="haloPenaltyCheckbox">
+            <input id="haloPenaltyCheckbox" type="checkbox">
+            <span data-i18n="actions.penaliseHalo">Penalise Halo</span>
+          </label>
+          <div class="toolbar-number-with-help">
+            <label class="export-option" for="moonPenaltyPercent">
+              <span data-i18n="actions.maximumMoonPenalty">Maximum Moon Penalty</span>
+              <span class="number-with-suffix">
+                <input id="moonPenaltyPercent" class="toolbar-number-input" type="number" min="0" max="100" step="1" value="0" inputmode="decimal">
+                <span aria-hidden="true">%</span>
+              </span>
+            </label>
+            <button class="help-button" type="button" aria-label="Moon impact penalty calculation" data-i18n-aria-label="help.moonPenaltyLabel" data-help="Enter the maximum score reduction from 0% to 100%; 0% disables it. The actual reduction uses plausible Moon exposure and the Moon-explained smooth background lift after discounting transient cloud residuals. Moon and cloud impacts may both apply, with a combined sky-penalty cap to prevent excessive double counting." data-i18n-help="help.moonPenalty">?</button>
+          </div>
+          <label class="export-option" for="csvSeparator">
+            <span data-i18n="actions.csvSeparator">CSV Separator</span>
+            <select id="csvSeparator" class="csv-separator-select">
+              <option value="comma" data-i18n="separator.comma">Comma (,)</option>
+              <option value="semicolon" data-i18n="separator.semicolon">Semicolon (;)</option>
+              <option value="tab" data-i18n="separator.tab">Tab</option>
+              <option value="pipe" data-i18n="separator.pipe">Pipe (|)</option>
+            </select>
+          </label>
+          <button id="exportBtn" type="button" disabled data-i18n="actions.export">Export CSV</button>
+        </div>
+      </section>
+
+      <section class="summary" id="summary">
+        <p data-i18n="summary.initial">Select one or more folders and click Analyse.</p>
+      </section>
+
+      <section class="moon-illumination-panel" id="moonIlluminationPanel" hidden>
+        <div class="moon-context-header">
+          <div>
+            <p class="section-label" data-i18n="moon.title">Moon &amp; Sky Context</p>
+            <p class="moon-illumination-explanation" data-i18n="moon.explanation">Each observing session is evaluated separately. Potential Moon Exposure uses Moon illumination, altitude, target separation, and filter. It does not change a score by itself; the optional penalty also requires a smooth median-background lift.</p>
+          </div>
+          <span class="moon-context-only" data-i18n="moon.contextOnly">Context + optional penalty</span>
+        </div>
+        <div class="moon-session-list" id="moonSessionList"></div>
+        <details class="moon-site-manager" id="moonSiteManager">
+          <summary data-i18n="moon.manageSites">Manage observing sites</summary>
+          <p class="moon-site-note" data-i18n="moon.siteNote">Header coordinates are used first. Detected coordinates can be given a saved name; folder assignments only fill missing locations.</p>
+          <div class="moon-detected-sites" id="moonDetectedSites"></div>
+          <p class="section-label moon-manual-site-label" data-i18n="moon.addLocationManually">Add location manually</p>
+          <form class="moon-site-form" id="moonSiteForm">
+            <label><span data-i18n="moon.siteName">Site name</span><input id="moonSiteName" type="text" maxlength="64" required></label>
+            <label><span data-i18n="moon.latitude">Latitude</span><input id="moonSiteLatitude" type="number" min="-90" max="90" step="0.000001" required></label>
+            <label><span data-i18n="moon.longitude">Longitude</span><input id="moonSiteLongitude" type="number" min="-180" max="180" step="0.000001" required></label>
+            <label><span data-i18n="moon.elevation">Elevation (m)</span><input id="moonSiteElevation" type="number" step="1"></label>
+            <button type="submit" data-i18n="moon.saveSite">Save Site</button>
+          </form>
+          <div class="moon-folder-sites" id="moonFolderSites"></div>
+        </details>
+      </section>
+
+      <section class="filter-panel" id="filterPanel" hidden>
+        <div class="filter-panel-header">
+          <div>
+            <p class="section-label" data-i18n="sections.frameTypes">Frame Types</p>
+            <div class="filter-tabs" id="frameTypeTabs" role="tablist" aria-label="Frame type groups" data-i18n-aria-label="sections.frameTypesAria"></div>
+          </div>
+          <p class="filter-warning" id="filterWarning"></p>
+        </div>
+        <div>
+          <p class="section-label" data-i18n="sections.filters">Filters</p>
+          <div class="filter-tabs" id="filterTabs" role="tablist" aria-label="Filter groups" data-i18n-aria-label="sections.filtersAria"></div>
+        </div>
+        <div id="objectShotGroup" hidden>
+          <p class="section-label" data-i18n="sections.objectShots">Object Shots</p>
+          <div class="filter-tabs" id="objectShotTabs" role="tablist" aria-label="Object shot groups" data-i18n-aria-label="sections.objectShotsAria"></div>
+        </div>
+        <div>
+          <p class="section-label" data-i18n="sections.resultGroups">Result Groups</p>
+          <div class="filter-tabs" id="recommendationTabs" role="tablist" aria-label="Recommendation groups" data-i18n-aria-label="sections.resultGroupsAria"></div>
+        </div>
+        <div>
+          <p class="section-label" data-i18n="sections.thresholds">Keeper Thresholds By Filter</p>
+          <div class="threshold-grid" id="filterThresholds" aria-label="Keeper thresholds by filter" data-i18n-aria-label="sections.thresholdsAria"></div>
+        </div>
+      </section>
+
+      <section class="calibration-report" id="calibrationReport" hidden></section>
+
+      <section class="selection-tools">
+        <div class="selection-actions">
+          <label class="select-all-control">
+            <input id="selectAllCheckbox" type="checkbox" aria-label="Select all analysed images" data-i18n-aria-label="selection.selectAllAria">
+            <span data-i18n="selection.selectAll">Select All</span>
+          </label>
+          <label class="select-all-control">
+            <input id="copyByFilterCheckbox" type="checkbox" aria-label="Copy selected images into filter folders" data-i18n-aria-label="selection.copyFilterAria">
+            <span data-i18n="selection.copyFilter">Copy by Filter</span>
+          </label>
+          <label class="select-all-control">
+            <input id="copyByTypeCheckbox" type="checkbox" aria-label="Copy selected images into frame type folders" data-i18n-aria-label="selection.copyTypeAria">
+            <span data-i18n="selection.copyType">Copy by Type</span>
+          </label>
+          <button id="chooseOutputBtn" type="button" data-i18n="selection.chooseOutput">Choose Output Folder</button>
+          <button id="selectKeepBtn" type="button" disabled data-i18n="selection.selectKeepers">Select Keepers</button>
+          <button id="clearSelectionBtn" type="button" disabled data-i18n="selection.clear">Clear Selection</button>
+          <button id="sendSelectedBtn" type="button" disabled data-i18n="selection.send">Send Selected</button>
+        </div>
+        <p class="output-label" id="outputLabel" data-i18n="output.notSelected">Output folder: not selected</p>
+      </section>
+
+      <section class="results">
+        <div class="results-grid" id="resultsBody" aria-label="Analysed images" data-i18n-aria-label="results.ariaLabel"></div>
+      </section>
+    </main>
+
+    <div class="zoom-overlay" id="zoomOverlay" hidden>
+      <section class="zoom-dialog" role="dialog" aria-modal="true" aria-labelledby="zoomTitle">
+        <div class="zoom-topbar">
+          <div class="zoom-title-block">
+            <p class="zoom-title" id="zoomTitle"></p>
+            <p class="zoom-status" id="zoomStatus"></p>
+          </div>
+          <label class="zoom-control" for="zoomStretch">
+            <span><span data-i18n="zoom.lensStretch">Lens Stretch</span> <span id="zoomStretchValue">25%</span></span>
+            <input id="zoomStretch" type="range" min="0" max="100" step="1" value="25">
+          </label>
+          <button id="zoomStarOverlayBtn" class="zoom-tool-button" type="button" aria-pressed="false" data-i18n="zoom.stars">Stars</button>
+          <button id="zoomMagnifierBtn" class="zoom-tool-button" type="button" aria-pressed="false" data-i18n="zoom.magnifier">Magnifier</button>
+          <label class="zoom-control zoom-lens-control" for="zoomMagnifierPower">
+            <span data-i18n="zoom.lens">Lens</span>
+            <select id="zoomMagnifierPower" class="zoom-lens-select">
+              <option value="2">2x</option>
+              <option value="4" selected>4x</option>
+              <option value="8">8x</option>
+              <option value="12">12x</option>
+              <option value="16">16x</option>
+            </select>
+          </label>
+          <button id="zoomCloseBtn" type="button" data-i18n="zoom.close">Close</button>
+        </div>
+        <div class="zoom-stage">
+          <img class="zoom-image fit" id="zoomImage" alt="">
+          <canvas class="zoom-star-overlay" id="zoomStarOverlay" aria-hidden="true"></canvas>
+          <div class="zoom-lens" id="zoomLens" hidden></div>
+        </div>
+        <div class="zoom-metrics" id="zoomMetrics"></div>
+      </section>
+    </div>
+    <script src="./moon-calculation.js?v=0.4.10"></script>
+    <script src="./i18n.js?v=0.4.10"></script>
+    <script src="./app.js?v=0.4.10"></script>
+  </body>
+</html>
