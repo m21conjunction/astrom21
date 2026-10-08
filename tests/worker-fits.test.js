@@ -177,7 +177,7 @@ async function run() {
   const message = await posted;
   assert.equal(message.type, "result", message.error || "worker result expected");
   const result = message.result;
-  assert.equal(result.calculationVersion, "0.4.14");
+  assert.equal(result.calculationVersion, "0.4.16");
   assert.ok(["wasm-simd", "wasm"].includes(result.analysisKernel), `expected WASM kernel, got ${result.analysisKernel}`);
   assert.equal(result.frameType, "Light");
   assert.equal(result.sourceFolder, "TestNight");

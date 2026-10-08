@@ -2,7 +2,7 @@
 
 Updated: 2026-10-07
 
-Current app version: **0.4.14**.
+Current app version: **0.4.16**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -163,7 +163,11 @@ When Web Workers are available, the app sends per-frame measurement work to a lo
 - The memory limit uses real local RAM in the Electron desktop wrapper, approximate browser memory when the browser exposes it, or a conservative fallback when memory is hidden by the browser.
 - The app also estimates per-worker memory pressure from the largest selected file. Expert mode reserves more memory per worker than Standard mode because it uses deeper measurement budgets.
 
-The selected count is the lowest of the pending frame count, CPU limit, and memory limit. During analysis, the summary panel shows the auto-selected worker count and whether the memory source was desktop memory, browser memory, browser heap limit, or fallback memory estimate.
+The selected count is the lowest of the pending frame count, CPU limit, and memory limit. During analysis, the summary panel shows the auto-selected worker count and whether the memory source was desktop memory, browser memory, browser heap limit, or fallback memory estimate. The completed analysis duration is retained in the final summary after workers stop, including after a normal completion or a user-initiated stop.
+
+### Analysis Summary Layout
+
+The final summary is displayed as separate lines rather than one long sentence: processed and ignored files, frame-type/filter grouping, Keep/Review/Discard totals, tracking/cloud/halo warnings, scoring settings, and total analysis time. The duration covers the analysis run through final score calculation, and a later UI refresh does not replace it.
 
 Each worker receives the original local file object, reads FITS, XISF, or bitmap data locally, measures the frame, and sends the measurement result back to the main UI. The main UI then:
 

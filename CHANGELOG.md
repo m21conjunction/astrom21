@@ -1,5 +1,14 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.16 - 2026-10-08
+
+- Added a compact responsive summary grid with stronger visual hierarchy for processed counts, recommendations, warnings, settings, and elapsed time.
+
+## 0.4.15 - 2026-10-08
+
+- Kept the completed analysis duration visible in the final results summary.
+- Split the crowded processed-frame summary into separate readable status lines.
+
 ## 0.4.14 - 2026-10-07
 
 - FWHM and eccentricity threshold failures now set the displayed Light-frame score to `0` as a hard penalty.

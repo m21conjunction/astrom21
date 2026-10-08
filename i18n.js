@@ -304,6 +304,12 @@
     "summary.objectShots": " Object shots: {objects}.",
     "summary.normalisedFilters": " Scores are normalised within each filter.",
     "summary.normalisedObjects": " Light scores are normalised within each object shot.",
+    "summary.processed": "{runNote}Processed {count} astronomy frame(s).",
+    "summary.grouping": "Types: {types}. Filters: {filters}.{objects}{filterNote}{objectNote}",
+    "summary.recommendations": "Keep: {keep}, Review: {review}, Discard: {discard}.",
+    "summary.warnings": "Tracking alerts: {tracking} (repeat-drift: {repeat}). Cloud warnings: {clouds}. Halo warnings: {halos}.",
+    "summary.settings": "Halo penalty: {haloPenalty}. Moon penalty: {moonPenalty}. Sharpness mode: {sharpnessMode}. Analysis mode: {analysisMode}.",
+    "summary.analysisTime": "Analysis time: {elapsed}.",
     "summary.full": "{runNote}Processed {count} astronomy frame(s).{ignored} Types: {types}. Filters: {filters}.{objects} Keep: {keep}, Review: {review}, Discard: {discard}. Tracking alerts: {tracking} (repeat-drift: {repeat}). Cloud warnings: {clouds}. Halo warnings: {halos}. Halo penalty: {haloPenalty}. Moon penalty: {moonPenalty}. Sharpness mode: {sharpnessMode}. Analysis mode: {analysisMode}.{filterNote}{objectNote}"
   };
 

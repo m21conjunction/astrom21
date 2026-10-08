@@ -152,7 +152,9 @@ const state = {
   siteManagerAutoOpened: false,
   nextFolderSelectionId: 1,
   analysisSummaryText: "",
+  analysisSummaryLines: [],
   lastAnalysisRunNote: "",
+  lastAnalysisDurationSeconds: NaN,
   outputDirectoryHandle: null,
   outputDirectoryPath: "",
   outputDirectoryName: "",
@@ -179,7 +181,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.4.14";
+const appVersion = "0.4.16";
 const wasmKernelScalarBase64 =
   "AGFzbQEAAAABCQFgBH9/fHwBfwMCAQAFAwEAAQcSAgZtZW1vcnkCAAVzdGF0cwAACpQCAZECBAJ/AXwDfwV8QQAhBCABIQVEAAAAAAAAAAAhBkEAIQdBACEIQQAhCQJAA0AgBCAFTw0BIAAqAgC7IQogCiAKYgRABSAHQQFqIQcgCiANoSELIA0gCyAHuKOgIQ0gCiANoSEMIAYgCyAMoqAhBiAKIAJmBEAgCEEBaiEICyAKIANmBEAgCUEBaiEJCwsgAEEEaiEAIARBAWohBAwACwsgB0EASwRAIAdBAUsEQCAGIAdBAWu4oyEOIA5EAAAAAAAAAAClIQ4FRAAAAAAAAAAAIQ4LBUQAAAAAAAAAACENRAAAAAAAAAAAIQ4LQQAgDTkDAEEIIA6fOQMAQRAgBzYCAEEUIAg2AgBBGCAJNgIAQQAL";
 const wasmKernelSimdBase64 =
@@ -2007,11 +2009,21 @@ function setOutputLabel() {
 
 function setSummaryMessage(extraText = "") {
   const baseText = state.analysisSummaryText || t("summary.initial");
+  const baseLines = Array.isArray(state.analysisSummaryLines) && state.analysisSummaryLines.length > 0
+    ? state.analysisSummaryLines
+    : [{ kind: "default", text: baseText }];
+  const baseMarkup = baseLines
+    .map((line, index) => {
+      const text = typeof line === "string" ? line : line.text;
+      const kind = typeof line === "string" ? `line-${index + 1}` : line.kind || `line-${index + 1}`;
+      return `<p class="summary-line summary-line--${escapeHtml(kind)}">${escapeHtml(text)}</p>`;
+    })
+    .join("");
   if (extraText) {
-    summaryEl.innerHTML = `<p>${escapeHtml(baseText)}</p><p>${escapeHtml(extraText)}</p>`;
+    summaryEl.innerHTML = `${baseMarkup}<p class="summary-line summary-line--extra">${escapeHtml(extraText)}</p>`;
     return;
   }
-  summaryEl.innerHTML = `<p>${escapeHtml(baseText)}</p>`;
+  summaryEl.innerHTML = baseMarkup;
 }
 
 function setTransientStatus(text) {
@@ -7883,8 +7895,12 @@ function updateSummary(results, totalFiles, unsupportedFiles) {
   const runNote = state.lastAnalysisRunNote ? `${state.lastAnalysisRunNote} ` : "";
 
   if (results.length === 0) {
-    const ignoredText = unsupportedFiles > 0 ? t("summary.ignored", { count: unsupportedFiles }) : "";
-    state.analysisSummaryText = `${runNote}${t("summary.processedZero", { ignored: ignoredText })}`;
+    const ignoredText = unsupportedFiles > 0 ? t("summary.ignored", { count: unsupportedFiles }).trim() : "";
+    state.analysisSummaryLines = [
+      { kind: "primary", text: t("summary.processed", { runNote, count: 0 }) },
+      ignoredText ? { kind: "ignored", text: ignoredText } : null
+    ].filter(Boolean);
+    state.analysisSummaryText = state.analysisSummaryLines.map((line) => line.text).join(" ");
     setSummaryMessage();
     return;
   }
@@ -7930,28 +7946,44 @@ function updateSummary(results, totalFiles, unsupportedFiles) {
     objectStats.filter((stat) => stat.objectShotKey !== unknownObjectShotKey).length > 1
       ? t("summary.normalisedObjects")
       : "";
-  const ignoredText = unsupportedFiles > 0 ? t("summary.ignored", { count: unsupportedFiles }) : "";
-  state.analysisSummaryText = t("summary.full", {
-    runNote,
-    count: results.length,
-    ignored: ignoredText,
-    types: typeText,
-    filters: filterText,
-    objects: objectText,
-    keep: keepers,
-    review,
-    discard,
-    tracking: trackingAlerts,
-    repeat: repeatDriftAlerts,
-    clouds: cloudWarnings,
-    halos: haloWarnings,
-    haloPenalty: haloPenaltyText,
-    moonPenalty: moonPenaltyText,
-    sharpnessMode: sharpnessModeLabel,
-    analysisMode: analysisModeText,
-    filterNote: mixedFilterText,
-    objectNote: mixedObjectText
-  });
+  const ignoredText = unsupportedFiles > 0 ? t("summary.ignored", { count: unsupportedFiles }).trim() : "";
+  state.analysisSummaryLines = [
+    { kind: "primary", text: t("summary.processed", { runNote, count: results.length }) },
+    ignoredText ? { kind: "ignored", text: ignoredText } : null,
+    {
+      kind: "grouping",
+      text: t("summary.grouping", {
+        types: typeText,
+        filters: filterText,
+        objects: objectText,
+        filterNote: mixedFilterText,
+        objectNote: mixedObjectText
+      })
+    },
+    { kind: "recommendations", text: t("summary.recommendations", { keep: keepers, review, discard }) },
+    {
+      kind: "warnings",
+      text: t("summary.warnings", {
+        tracking: trackingAlerts,
+        repeat: repeatDriftAlerts,
+        clouds: cloudWarnings,
+        halos: haloWarnings
+      })
+    },
+    {
+      kind: "settings",
+      text: t("summary.settings", {
+        haloPenalty: haloPenaltyText,
+        moonPenalty: moonPenaltyText,
+        sharpnessMode: sharpnessModeLabel,
+        analysisMode: analysisModeText
+      })
+    },
+    Number.isFinite(state.lastAnalysisDurationSeconds)
+      ? { kind: "time", text: t("summary.analysisTime", { elapsed: formatTimerSeconds(state.lastAnalysisDurationSeconds) }) }
+      : null
+  ].filter(Boolean);
+  state.analysisSummaryText = state.analysisSummaryLines.map((line) => line.text).join(" ");
   setSummaryMessage();
 }
 
@@ -11173,6 +11205,7 @@ async function analyzeSelectedFiles() {
     state.activeFilter = allFiltersKey;
     state.activeObjectShot = allObjectShotsKey;
     state.activeRecommendation = allRecommendationsKey;
+    state.analysisSummaryLines = [];
     renderMoonIlluminationPanel();
     renderFilterPanel();
     exportBtn.disabled = true;
@@ -11232,6 +11265,7 @@ async function analyzeSelectedFiles() {
     const results = retainedResults.concat(newResults);
     updateMoonIllumination(results);
     computeFinalScores(results);
+    state.lastAnalysisDurationSeconds = (Date.now() - analysisProgress.startedAt) / 1000;
     results.sort((a, b) => b.quality - a.quality);
 
     state.results = results;
@@ -11354,7 +11388,9 @@ if (clearFoldersBtn) {
     state.activeObjectShot = allObjectShotsKey;
     state.activeRecommendation = allRecommendationsKey;
     state.analysisSummaryText = "";
+    state.analysisSummaryLines = [];
     state.lastAnalysisRunNote = "";
+    state.lastAnalysisDurationSeconds = NaN;
     state.lastTotalFiles = 0;
     state.lastUnsupportedFiles = 0;
     resultsBody.innerHTML = "";
@@ -11691,6 +11727,7 @@ window.addEventListener("astro-language-change", () => {
     renderAnalysisView();
   } else {
     state.analysisSummaryText = "";
+    state.analysisSummaryLines = [];
     renderMoonIlluminationPanel();
     renderFilterPanel();
     renderCalibrationReport();
