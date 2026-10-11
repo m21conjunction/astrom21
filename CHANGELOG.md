@@ -1,5 +1,20 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.19 - 2026-10-10
+
+- Added an individual default-reset button beside each numeric analysis control.
+- Kept the global **Restore Analysis Defaults** action for resetting all analysis controls together.
+
+## 0.4.18 - 2026-10-09
+
+- Added a visible default value beside every numeric analysis control, including Maximum FWHM and Maximum Eccentricity.
+- Renamed the reset action to **Restore Analysis Defaults** so it clearly covers thresholds as well as percentages.
+
+## 0.4.17 - 2026-10-09
+
+- Added small decorative icons to the compact analysis summary rows for faster visual scanning.
+- Kept the icons presentational only; scoring and analysis calculations are unchanged.
+
 ## 0.4.16 - 2026-10-08
 
 - Added a compact responsive summary grid with stronger visual hierarchy for processed counts, recommendations, warnings, settings, and elapsed time.

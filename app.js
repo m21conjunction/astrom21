@@ -125,6 +125,14 @@ const clipWeightValue = document.getElementById("clipWeightValue");
 const previewStretchValue = document.getElementById("previewStretchValue");
 const fwhmThresholdValue = document.getElementById("fwhmThresholdValue");
 const eccentricityThresholdValue = document.getElementById("eccentricityThresholdValue");
+const sharpnessWeightDefault = document.getElementById("sharpnessWeightDefault");
+const noiseWeightDefault = document.getElementById("noiseWeightDefault");
+const starsWeightDefault = document.getElementById("starsWeightDefault");
+const starCountWeightDefault = document.getElementById("starCountWeightDefault");
+const clipWeightDefault = document.getElementById("clipWeightDefault");
+const previewStretchDefault = document.getElementById("previewStretchDefault");
+const fwhmThresholdDefault = document.getElementById("fwhmThresholdDefault");
+const eccentricityThresholdDefault = document.getElementById("eccentricityThresholdDefault");
 
 const zoomOverlay = document.getElementById("zoomOverlay");
 const zoomTitle = document.getElementById("zoomTitle");
@@ -181,7 +189,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.4.16";
+const appVersion = "0.4.19";
 const wasmKernelScalarBase64 =
   "AGFzbQEAAAABCQFgBH9/fHwBfwMCAQAFAwEAAQcSAgZtZW1vcnkCAAVzdGF0cwAACpQCAZECBAJ/AXwDfwV8QQAhBCABIQVEAAAAAAAAAAAhBkEAIQdBACEIQQAhCQJAA0AgBCAFTw0BIAAqAgC7IQogCiAKYgRABSAHQQFqIQcgCiANoSELIA0gCyAHuKOgIQ0gCiANoSEMIAYgCyAMoqAhBiAKIAJmBEAgCEEBaiEICyAKIANmBEAgCUEBaiEJCwsgAEEEaiEAIARBAWohBAwACwsgB0EASwRAIAdBAUsEQCAGIAdBAWu4oyEOIA5EAAAAAAAAAAClIQ4FRAAAAAAAAAAAIQ4LBUQAAAAAAAAAACENRAAAAAAAAAAAIQ4LQQAgDTkDAEEIIA6fOQMAQRAgBzYCAEEUIAg2AgBBGCAJNgIAQQAL";
 const wasmKernelSimdBase64 =
@@ -2016,14 +2024,27 @@ function setSummaryMessage(extraText = "") {
     .map((line, index) => {
       const text = typeof line === "string" ? line : line.text;
       const kind = typeof line === "string" ? `line-${index + 1}` : line.kind || `line-${index + 1}`;
-      return `<p class="summary-line summary-line--${escapeHtml(kind)}">${escapeHtml(text)}</p>`;
+      return `<p class="summary-line summary-line--${escapeHtml(kind)}"><span class="summary-line-icon" aria-hidden="true">${summaryLineIcon(kind)}</span><span>${escapeHtml(text)}</span></p>`;
     })
     .join("");
   if (extraText) {
-    summaryEl.innerHTML = `${baseMarkup}<p class="summary-line summary-line--extra">${escapeHtml(extraText)}</p>`;
+    summaryEl.innerHTML = `${baseMarkup}<p class="summary-line summary-line--extra"><span class="summary-line-icon" aria-hidden="true">•</span><span>${escapeHtml(extraText)}</span></p>`;
     return;
   }
   summaryEl.innerHTML = baseMarkup;
+}
+
+function summaryLineIcon(kind) {
+  const icons = {
+    primary: "▦",
+    ignored: "⊘",
+    grouping: "◌",
+    recommendations: "✓",
+    warnings: "!",
+    settings: "⚙",
+    time: "◷"
+  };
+  return icons[kind] || "•";
 }
 
 function setTransientStatus(text) {
@@ -2476,7 +2497,7 @@ function applyStoredSettings() {
   }
 }
 
-function resetDefaultPercentages() {
+function resetAnalysisDefaults() {
   const previousPreviewStretch = getPreviewStretchValue();
   setRangeValue(sharpnessWeight, defaultScoreSettings.sharpnessWeight);
   setRangeValue(noiseWeight, defaultScoreSettings.noiseWeight);
@@ -2558,6 +2579,21 @@ function updateWeightLabels() {
   starsWeightValue.textContent = `${starsWeight.value}%`;
   starCountWeightValue.textContent = `${starCountWeight.value}%`;
   clipWeightValue.textContent = `${clipWeight.value}%`;
+  if (sharpnessWeightDefault) {
+    sharpnessWeightDefault.textContent = t("controls.defaultValue", { value: `${defaultScoreSettings.sharpnessWeight}%` });
+  }
+  if (noiseWeightDefault) {
+    noiseWeightDefault.textContent = t("controls.defaultValue", { value: `${defaultScoreSettings.noiseWeight}%` });
+  }
+  if (starsWeightDefault) {
+    starsWeightDefault.textContent = t("controls.defaultValue", { value: `${defaultScoreSettings.starsWeight}%` });
+  }
+  if (starCountWeightDefault) {
+    starCountWeightDefault.textContent = t("controls.defaultValue", { value: `${defaultScoreSettings.starCountWeight}%` });
+  }
+  if (clipWeightDefault) {
+    clipWeightDefault.textContent = t("controls.defaultValue", { value: `${defaultScoreSettings.clipWeight}%` });
+  }
 }
 
 function getFwhmThreshold() {
@@ -2579,6 +2615,12 @@ function updateQualityThresholdLabels() {
   if (eccentricityThresholdValue) {
     eccentricityThresholdValue.textContent = getEccentricityThreshold().toFixed(2);
   }
+  if (fwhmThresholdDefault) {
+    fwhmThresholdDefault.textContent = t("controls.defaultValue", { value: `${defaultFwhmThreshold.toFixed(1)} px` });
+  }
+  if (eccentricityThresholdDefault) {
+    eccentricityThresholdDefault.textContent = t("controls.defaultValue", { value: defaultEccentricityThreshold.toFixed(2) });
+  }
 }
 
 function getPreviewStretchValue() {
@@ -2587,6 +2629,64 @@ function getPreviewStretchValue() {
 
 function updatePreviewStretchLabel() {
   previewStretchValue.textContent = `${getPreviewStretchValue()}%`;
+  if (previewStretchDefault) {
+    previewStretchDefault.textContent = t("controls.defaultValue", { value: `${defaultPreviewStretch}%` });
+  }
+}
+
+function defaultValueForAnalysisControl(target) {
+  const defaults = {
+    sharpnessWeight: `${defaultScoreSettings.sharpnessWeight}%`,
+    noiseWeight: `${defaultScoreSettings.noiseWeight}%`,
+    starsWeight: `${defaultScoreSettings.starsWeight}%`,
+    starCountWeight: `${defaultScoreSettings.starCountWeight}%`,
+    clipWeight: `${defaultScoreSettings.clipWeight}%`,
+    fwhmThreshold: `${defaultFwhmThreshold.toFixed(1)} px`,
+    eccentricityThreshold: defaultEccentricityThreshold.toFixed(2),
+    previewStretch: `${defaultPreviewStretch}%`
+  };
+  return defaults[target] || "";
+}
+
+function updateDefaultResetButtons() {
+  document.querySelectorAll("[data-default-target]").forEach((button) => {
+    const parameter = button.dataset.defaultLabelKey ? t(button.dataset.defaultLabelKey) : t("controls.analysisParameter");
+    const label = t("controls.restoreDefault", {
+      parameter,
+      value: defaultValueForAnalysisControl(button.dataset.defaultTarget)
+    });
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  });
+}
+
+function resetIndividualAnalysisControl(target) {
+  const defaults = {
+    sharpnessWeight: defaultScoreSettings.sharpnessWeight,
+    noiseWeight: defaultScoreSettings.noiseWeight,
+    starsWeight: defaultScoreSettings.starsWeight,
+    starCountWeight: defaultScoreSettings.starCountWeight,
+    clipWeight: defaultScoreSettings.clipWeight,
+    fwhmThreshold: defaultFwhmThreshold,
+    eccentricityThreshold: defaultEccentricityThreshold,
+    previewStretch: defaultPreviewStretch
+  };
+  if (!Object.prototype.hasOwnProperty.call(defaults, target)) {
+    return;
+  }
+
+  const input = document.getElementById(target);
+  if (!input) {
+    return;
+  }
+  setRangeValue(input, defaults[target]);
+  if (target === "previewStretch") {
+    onPreviewStretchChanged();
+  } else if (target === "fwhmThreshold" || target === "eccentricityThreshold") {
+    onQualityThresholdChanged();
+  } else {
+    onScoreSettingChanged();
+  }
 }
 
 function stretchSettingsFromStrength(strengthValue) {
@@ -11333,6 +11433,10 @@ fwhmThreshold.addEventListener("input", onQualityThresholdChanged);
 eccentricityThreshold.addEventListener("input", onQualityThresholdChanged);
 previewStretch.addEventListener("input", onPreviewStretchChanged);
 
+document.querySelectorAll("[data-default-target]").forEach((button) => {
+  button.addEventListener("click", () => resetIndividualAnalysisControl(button.dataset.defaultTarget));
+});
+
 if (sharpnessModeHybrid) {
   sharpnessModeHybrid.addEventListener("change", () => {
     saveSettings();
@@ -11428,7 +11532,7 @@ if (moonFolderSites) {
 }
 
 if (resetDefaultsBtn) {
-  resetDefaultsBtn.addEventListener("click", resetDefaultPercentages);
+  resetDefaultsBtn.addEventListener("click", resetAnalysisDefaults);
 }
 
 analyzeBtn.addEventListener("click", () => {
@@ -11720,6 +11824,10 @@ document.addEventListener("keydown", (event) => {
 
 window.addEventListener("astro-language-change", () => {
   state.lastAnalysisRunNote = "";
+  updateWeightLabels();
+  updatePreviewStretchLabel();
+  updateQualityThresholdLabels();
+  updateDefaultResetButtons();
   updateFolderFileCount();
   setOutputLabel();
   updateStarOverlayButton();
@@ -11747,6 +11855,7 @@ applyStoredSettings();
 updateWeightLabels();
 updatePreviewStretchLabel();
 updateQualityThresholdLabels();
+updateDefaultResetButtons();
 updateStarOverlayButton();
 setOutputLabel();
 updateFolderFileCount();

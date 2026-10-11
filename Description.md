@@ -2,7 +2,7 @@
 
 Updated: 2026-10-07
 
-Current app version: **0.4.16**.
+Current app version: **0.4.19**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -167,7 +167,7 @@ The selected count is the lowest of the pending frame count, CPU limit, and memo
 
 ### Analysis Summary Layout
 
-The final summary is displayed as separate lines rather than one long sentence: processed and ignored files, frame-type/filter grouping, Keep/Review/Discard totals, tracking/cloud/halo warnings, scoring settings, and total analysis time. The duration covers the analysis run through final score calculation, and a later UI refresh does not replace it.
+The final summary is displayed as separate lines rather than one long sentence: processed and ignored files, frame-type/filter grouping, Keep/Review/Discard totals, tracking/cloud/halo warnings, scoring settings, and total analysis time. Each line has a small decorative icon to make the category easier to scan. The icons are status cues only; they do not add measurements or change scores. The duration covers the analysis run through final score calculation, and a later UI refresh does not replace it.
 
 Each worker receives the original local file object, reads FITS, XISF, or bitmap data locally, measures the frame, and sends the measurement result back to the main UI. The main UI then:
 
@@ -1356,6 +1356,8 @@ Clipping: 10
 ```
 
 The user can change these weights.
+
+The controls show the default value beside the current value for every numeric analysis setting. This includes the scoring weights, preview stretch, maximum FWHM (`4.0 px`), and maximum eccentricity (`0.65`). Each numeric control has its own circular reset button, and **Restore Analysis Defaults** restores all of these analysis values together. The displayed defaults are reference values; changing a control remains persisted locally until reset.
 
 Component scores:
 
