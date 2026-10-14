@@ -1,5 +1,13 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.20 - 2026-10-14
+
+- Disabled Developer Tools and their common keyboard shortcuts in packaged production builds while retaining them during development.
+- Enabled Electron ASAR integrity, ASAR-only application loading, and production fuses that disable Run-as-Node, `NODE_OPTIONS`, and CLI inspection arguments.
+- Excluded reproducible WebAssembly `.wat` source files from packaged applications while continuing to ship the compiled `.wasm` kernels.
+- Added macOS and Windows release commands that require code signing; macOS release builds also require notarisation.
+- Added `RELEASING.md` to document signing, verification, current protection boundaries, and the remaining signed-offline-licence and compiled-module work.
+
 ## 0.4.19 - 2026-10-10
 
 - Added an individual default-reset button beside each numeric analysis control.

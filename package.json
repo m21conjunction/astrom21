@@ -1,7 +1,7 @@
 {
   "name": "astro-sub-analyser",
   "productName": "Astronomy Sub Analyser",
-  "version": "0.4.19",
+  "version": "0.4.20",
   "description": "Offline astronomy frame analysis and selection tool.",
   "main": "electron/main.js",
   "private": true,
@@ -11,7 +11,9 @@
     "dist": "electron-builder",
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
-    "dist:linux": "electron-builder --linux"
+    "dist:linux": "electron-builder --linux",
+    "dist:release:mac": "electron-builder --config electron-builder.release.cjs --mac",
+    "dist:release:win": "electron-builder --config electron-builder.release.cjs --win"
   },
   "build": {
     "appId": "com.moonconjunction.astrosubanalyser",
@@ -22,10 +24,26 @@
       "i18n.js",
       "moon-calculation.js",
       "app.js",
-      "wasm/**/*",
+      "wasm/*.wasm",
       "assets/**/*",
       "electron/**/*"
     ],
+    "asar": {
+      "disableIntegrity": false
+    },
+    "electronFuses": {
+      "version": "1",
+      "strictlyRequireAllFuses": true,
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "loadBrowserProcessSpecificV8Snapshot": false,
+      "grantFileProtocolExtraPrivileges": true,
+      "wasmTrapHandlers": true
+    },
     "mac": {
       "category": "public.app-category.photography",
       "target": [
@@ -36,13 +54,20 @@
     "win": {
       "target": "nsis"
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "uninstallDisplayName": "Astronomy Sub Analyser ${version}"
+    },
     "linux": {
       "target": "AppImage",
       "category": "Graphics"
     }
   },
   "devDependencies": {
-    "electron": "latest",
-    "electron-builder": "latest"
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3"
   }
 }

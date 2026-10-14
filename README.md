@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.4.19**.
+Current app version: **0.4.20**.
 
-Version `0.4.19` adds an individual reset button beside each numeric analysis control while retaining the global **Restore Analysis Defaults** action.
+Version `0.4.20` hardens packaged Electron releases: production Developer Tools are disabled, application loading is restricted to the integrity-checked ASAR archive, risky Electron runtime switches are fused off, source `.wat` files are excluded, and dedicated release commands refuse unsigned macOS or Windows output. See [RELEASING.md](RELEASING.md).
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -89,6 +89,10 @@ For installer/package builds, `electron-builder` is still needed. If the npm reg
 Important: `package.json` must use `"main": "electron/main.js"`. Do not point Electron at `app.js`; that file is the browser UI script and needs `document`.
 
 In the desktop app, **Choose Output Folder** uses Electron's native folder picker, and **Send Selected** copies files directly through the operating system. The browser version still uses the browser File System Access API where available.
+
+Packaged production builds disable Developer Tools and their common shortcuts, validate the application ASAR, and prevent Electron from loading application code outside that archive. Development with `npm start` keeps Developer Tools available. These measures make casual inspection and modification substantially harder, but they are not a substitute for moving commercially sensitive scoring logic into compiled native/WASM modules.
+
+Use `npm run dist:release:mac` or `npm run dist:release:win` for a distributable release. Those commands require a valid platform signing identity and fail rather than silently creating an unsigned release. Certificate setup, signature checks, notarisation, and the remaining licence/compiled-module work are documented in [RELEASING.md](RELEASING.md).
 
 ## Notes
 

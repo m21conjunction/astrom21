@@ -1,8 +1,71 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { fileURLToPath } = require("node:url");
 
 let mainWindow = null;
+const indexPath = path.resolve(__dirname, "..", "index.html");
+const productionBuild = app.isPackaged;
+
+app.enableSandbox();
+
+function comparablePath(filePath) {
+  const resolvedPath = path.resolve(filePath);
+  return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
+}
+
+function isTrustedAppUrl(rawUrl) {
+  try {
+    const parsedUrl = new URL(rawUrl);
+    return parsedUrl.protocol === "file:" && comparablePath(fileURLToPath(parsedUrl)) === comparablePath(indexPath);
+  } catch (error) {
+    return false;
+  }
+}
+
+function assertTrustedSender(event) {
+  const senderUrl = event.senderFrame ? event.senderFrame.url : event.sender.getURL();
+  if (!isTrustedAppUrl(senderUrl)) {
+    throw new Error("Request rejected from an untrusted page.");
+  }
+}
+
+function installApplicationMenu() {
+  if (!productionBuild) {
+    return;
+  }
+
+  const template = [
+    ...(process.platform === "darwin"
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" }
+            ]
+          }
+        ]
+      : [{ role: "fileMenu" }]),
+    { role: "editMenu" },
+    { role: "windowMenu" }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function isDeveloperToolsShortcut(input = {}) {
+  const key = String(input.key || "").toLowerCase();
+  const commandOrControl = Boolean(input.control || input.meta);
+  return (
+    key === "f12" ||
+    (commandOrControl && input.shift && (key === "i" || key === "j" || key === "c"))
+  );
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -10,16 +73,39 @@ function createWindow() {
     height: 950,
     minWidth: 1100,
     minHeight: 720,
-    title: "Astronomy Sub Analyser v0.2.0",
+    title: `Astronomy Sub Analyser v${app.getVersion()}`,
     backgroundColor: "#eef2f4",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      devTools: !productionBuild,
+      backgroundThrottling: false
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, "..", "index.html"));
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event, navigationUrl) => {
+    if (!isTrustedAppUrl(navigationUrl)) {
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (productionBuild && isDeveloperToolsShortcut(input)) {
+      event.preventDefault();
+    }
+  });
+  mainWindow.webContents.on("devtools-opened", () => {
+    if (productionBuild) {
+      mainWindow.webContents.closeDevTools();
+    }
+  });
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+
+  mainWindow.loadFile(indexPath);
 }
 
 function safeRelativePath(relativePath, fallbackName) {
@@ -32,10 +118,14 @@ function safeRelativePath(relativePath, fallbackName) {
 
 function pathIsInside(parentPath, childPath) {
   const relative = path.relative(parentPath, childPath);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
 }
 
 ipcMain.handle("astro:choose-output-folder", async (event) => {
+  assertTrustedSender(event);
   const parentWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
   const result = await dialog.showOpenDialog(parentWindow, {
     title: "Choose Output Folder",
@@ -53,7 +143,8 @@ ipcMain.handle("astro:choose-output-folder", async (event) => {
   };
 });
 
-ipcMain.handle("astro:copy-file", async (_event, payload = {}) => {
+ipcMain.handle("astro:copy-file", async (event, payload = {}) => {
+  assertTrustedSender(event);
   const sourcePath = String(payload.sourcePath || "");
   const outputDirectoryPath = String(payload.outputDirectoryPath || "");
   if (!sourcePath || !outputDirectoryPath) {
@@ -74,15 +165,33 @@ ipcMain.handle("astro:copy-file", async (_event, payload = {}) => {
   };
 });
 
-app.whenReady().then(() => {
-  createWindow();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
     }
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
   });
-});
+
+  app.whenReady().then(() => {
+    installApplicationMenu();
+    createWindow();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+      }
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
