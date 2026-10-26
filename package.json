@@ -1,7 +1,7 @@
 {
   "name": "astro-sub-analyser",
   "productName": "Astronomy Sub Analyser",
-  "version": "0.4.20",
+  "version": "0.4.21",
   "description": "Offline astronomy frame analysis and selection tool.",
   "main": "electron/main.js",
   "private": true,

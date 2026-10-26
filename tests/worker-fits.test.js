@@ -33,6 +33,7 @@ function stubElement() {
 
 function mainContext() {
   const elements = new Map();
+  const testWorkers = [];
   const defaultValues = {
     sharpnessWeight: "40",
     noiseWeight: "15",
@@ -73,12 +74,29 @@ function mainContext() {
     CustomEvent: function CustomEvent() {},
     atob,
     WebAssembly,
+    Worker: class TestWorker {
+      constructor() {
+        this.terminated = false;
+        this.onmessage = null;
+        this.onerror = null;
+        testWorkers.push(this);
+      }
+      postMessage(message) {
+        if (message.type === "warmup" && this.onmessage) {
+          this.onmessage({ data: { type: "ready", kernel: "wasm-simd" } });
+        }
+      }
+      terminate() {
+        this.terminated = true;
+      }
+    },
     setTimeout,
     clearTimeout,
     setInterval,
     clearInterval
   };
   context.window = context;
+  context.testWorkers = testWorkers;
   context.globalThis = context;
   context.addEventListener = () => {};
   context.dispatchEvent = () => {};
@@ -143,12 +161,31 @@ async function run() {
     }
   };
 
-  let resolveMessage;
-  const posted = new Promise((resolve) => { resolveMessage = resolve; });
+  main.testFile = file;
+  const warmupState = JSON.parse(
+    vm.runInContext(
+      "state.selectedFiles = [testFile]; warmAnalysisWorkers(); " +
+        "JSON.stringify({ warmed: warmedAnalysisWorkers.length, ready: warmedAnalysisWorkers[0].ready, created: testWorkers.length })",
+      main
+    )
+  );
+  assert.deepEqual(warmupState, { warmed: 1, ready: true, created: 1 });
+  const reusedWorkerCount = vm.runInContext(
+    "const reused = takeWarmedAnalysisWorkers(1); const count = reused.length; reused[0].terminate(); count",
+    main
+  );
+  assert.equal(reusedWorkerCount, 1);
+
+  const messages = [];
+  let resolveResult;
+  const posted = new Promise((resolve) => { resolveResult = resolve; });
   const worker = {
     console,
     self: {
-      postMessage(message) { resolveMessage(message); }
+      postMessage(message) {
+        messages.push(message);
+        if (message.type === "result" || message.type === "error") resolveResult(message);
+      }
     },
     TextDecoder,
     DOMParser: function DOMParser() {},
@@ -161,6 +198,9 @@ async function run() {
   worker.globalThis = worker;
   vm.createContext(worker);
   vm.runInContext(workerSource, worker);
+  await worker.self.onmessage({ data: { type: "warmup" } });
+  assert.equal(messages[0].type, "ready");
+  assert.ok(["wasm-simd", "wasm"].includes(messages[0].kernel));
   await worker.self.onmessage({
     data: {
       type: "analyze",
@@ -177,7 +217,7 @@ async function run() {
   const message = await posted;
   assert.equal(message.type, "result", message.error || "worker result expected");
   const result = message.result;
-  assert.equal(result.calculationVersion, "0.4.20");
+  assert.equal(result.calculationVersion, "0.4.21");
   assert.ok(["wasm-simd", "wasm"].includes(result.analysisKernel), `expected WASM kernel, got ${result.analysisKernel}`);
   assert.equal(result.frameType, "Light");
   assert.equal(result.sourceFolder, "TestNight");

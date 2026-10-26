@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser Wishlist
 
 Created: 2026-08-13
-Updated: 2026-10-06
-Current app version: 0.4.11
+Updated: 2026-10-26
+Current app version: 0.4.21
 
 This is the current improvement wishlist for the app before the future desktop-packaged version.
 
@@ -32,7 +32,7 @@ Best options:
 
 6. **Worker Pool**
    Analyse several images in parallel, but cap it carefully, maybe 2 to 4 large FITS/XISF frames at once, otherwise memory becomes the bottleneck.
-   Status: implemented with automatic worker selection. The app now evaluates logical CPU cores, reported/estimated memory, and largest-file memory pressure for the current batch instead of using the old fixed Standard/Expert caps. The future Electron desktop package can use real local CPU/RAM values.
+   Status: implemented with automatic worker selection. The app now evaluates logical CPU cores, reported/estimated memory, and largest-file memory pressure for the current batch instead of using the old fixed Standard/Expert caps. The Electron desktop package can use real local CPU/RAM values. Since v0.4.21, worker source is prepared during idle time and up to two workers are pre-warmed after folder selection to reduce first-frame startup delay without retaining full-resolution image buffers after analysis.
 
 ## Implemented
 

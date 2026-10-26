@@ -1,8 +1,8 @@
 # Astronomy Sub Analyser (Offline)
 
-Current app version: **0.4.20**.
+Current app version: **0.4.21**.
 
-Version `0.4.20` hardens packaged Electron releases: production Developer Tools are disabled, application loading is restricted to the integrity-checked ASAR archive, risky Electron runtime switches are fused off, source `.wat` files are excluded, and dedicated release commands refuse unsigned macOS or Windows output. See [RELEASING.md](RELEASING.md).
+Version `0.4.21` reduces the pause before the first analysed frame by preparing the generated worker program during idle time and pre-warming up to two WASM workers after folders are selected. The normal CPU/RAM-selected pool still expands when analysis begins, and all workers are terminated after the run to release large image buffers.
 
 This app runs fully offline in your browser and ranks astronomy images by quality.
 
@@ -101,6 +101,7 @@ Use `npm run dist:release:mac` or `npm run dist:release:win` for a distributable
 - **Analysis Mode** defaults to **Standard**. FITS/XISF measurements now use the full-resolution pixel array in both modes. Standard stays faster by sampling expensive whole-frame passes; Expert uses deeper sampling budgets for star size, roundness, repeat drift, flat artefacts, clouds, halos, and histograms.
 - Standard and Expert use the same keeper thresholds and recommendation rules. They can still produce different keeper counts because Expert remeasures the frames with deeper samples and more guide/star candidates, which can change quality scores or penalties around the threshold.
 - Analysis uses a local worker pool when available. Worker count is selected automatically from detected logical CPU cores, reported/estimated memory, and the largest files in the current batch. The app normally leaves one logical core free for the UI and reduces workers when large FITS/XISF files would create memory pressure.
+- Worker source generation is prepared during browser idle time. After supported files are selected, up to two lightweight workers are pre-warmed so their script parsing and WASM initialisation normally happen before **Analyse** is clicked. Analysis then expands to the full automatic worker count, and every worker is terminated when the run finishes or is stopped so full-resolution frame memory is not retained.
 - In the browser, memory detection is approximate because Safari/Firefox may not expose physical RAM. The app then uses a conservative fallback. In the Electron desktop wrapper, the app can read real local CPU and RAM values and use them for the same automatic worker choice.
 - If Web Workers are unavailable or blocked, analysis falls back to the original local single-thread path.
 - During analysis, the summary panel shows elapsed time and estimated remaining seconds. The estimate starts after the first frame has completed and improves as more frames finish. With workers, the remaining-time estimate accounts for parallel frames in progress. After analysis finishes, the final elapsed analysis time remains visible alongside the processed count, Keep/Review/Discard totals, warnings, and analysis settings.

@@ -189,7 +189,7 @@ const state = {
 };
 
 const settingsStorageKey = "astronomySubAnalyser.settings.v1";
-const appVersion = "0.4.20";
+const appVersion = "0.4.21";
 const wasmKernelScalarBase64 =
   "AGFzbQEAAAABCQFgBH9/fHwBfwMCAQAFAwEAAQcSAgZtZW1vcnkCAAVzdGF0cwAACpQCAZECBAJ/AXwDfwV8QQAhBCABIQVEAAAAAAAAAAAhBkEAIQdBACEIQQAhCQJAA0AgBCAFTw0BIAAqAgC7IQogCiAKYgRABSAHQQFqIQcgCiANoSELIA0gCyAHuKOgIQ0gCiANoSEMIAYgCyAMoqAhBiAKIAJmBEAgCEEBaiEICyAKIANmBEAgCUEBaiEJCwsgAEEEaiEAIARBAWohBAwACwsgB0EASwRAIAdBAUsEQCAGIAdBAWu4oyEOIA5EAAAAAAAAAAClIQ4FRAAAAAAAAAAAIQ4LBUQAAAAAAAAAACENRAAAAAAAAAAAIQ4LQQAgDTkDAEEIIA6fOQMAQRAgBzYCAEEUIAg2AgBBGCAJNgIAQQAL";
 const wasmKernelSimdBase64 =
@@ -496,6 +496,9 @@ const combinedSkyPenaltyMaximum = 0.75;
 const flatArtifactGroupMinimum = 3;
 const selectedFileMetadata = new WeakMap();
 let analysisWorkerObjectUrl = "";
+const analysisWorkerWarmupLimit = 2;
+let analysisWorkerWarmupHandle = null;
+const warmedAnalysisWorkers = [];
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -10325,6 +10328,11 @@ function refreshResultThumbnail() {}
 
 self.onmessage = async (event) => {
   const message = event.data || {};
+  if (message.type === "warmup") {
+    await initializeWasmKernel();
+    self.postMessage({ type: "ready", kernel: wasmKernelMode });
+    return;
+  }
   if (message.type !== "analyze") {
     return;
   }
@@ -10380,6 +10388,118 @@ function createAnalysisWorker() {
   } catch (error) {
     return null;
   }
+}
+
+function cancelAnalysisWorkerWarmupSchedule() {
+  if (!analysisWorkerWarmupHandle) {
+    return;
+  }
+  if (
+    analysisWorkerWarmupHandle.kind === "idle" &&
+    typeof window.cancelIdleCallback === "function"
+  ) {
+    window.cancelIdleCallback(analysisWorkerWarmupHandle.id);
+  } else {
+    window.clearTimeout(analysisWorkerWarmupHandle.id);
+  }
+  analysisWorkerWarmupHandle = null;
+}
+
+function discardWarmedAnalysisWorker(entry) {
+  const index = warmedAnalysisWorkers.indexOf(entry);
+  if (index >= 0) {
+    warmedAnalysisWorkers.splice(index, 1);
+  }
+  entry.worker.onmessage = null;
+  entry.worker.onerror = null;
+  entry.worker.terminate();
+}
+
+function terminateWarmedAnalysisWorkers() {
+  cancelAnalysisWorkerWarmupSchedule();
+  while (warmedAnalysisWorkers.length > 0) {
+    discardWarmedAnalysisWorker(warmedAnalysisWorkers[0]);
+  }
+}
+
+function warmAnalysisWorkers() {
+  analysisWorkerWarmupHandle = null;
+  if (state.analysisRun || !analysisWorkersSupported()) {
+    return;
+  }
+
+  const supportedFiles = selectedFileStats(state.selectedFiles).supported;
+  if (supportedFiles.length === 0) {
+    terminateWarmedAnalysisWorkers();
+    return;
+  }
+
+  const workerPlan = workerPoolResourcePlan(getAnalysisMode(), supportedFiles);
+  const targetCount = Math.min(analysisWorkerWarmupLimit, workerPlan.workerCount);
+  while (warmedAnalysisWorkers.length > targetCount) {
+    discardWarmedAnalysisWorker(warmedAnalysisWorkers[warmedAnalysisWorkers.length - 1]);
+  }
+
+  while (warmedAnalysisWorkers.length < targetCount) {
+    const worker = createAnalysisWorker();
+    if (!worker) {
+      break;
+    }
+    const entry = { worker, ready: false };
+    warmedAnalysisWorkers.push(entry);
+    worker.onmessage = (event) => {
+      if (event.data && event.data.type === "ready") {
+        entry.ready = true;
+      }
+    };
+    worker.onerror = () => discardWarmedAnalysisWorker(entry);
+    worker.postMessage({ type: "warmup" });
+  }
+}
+
+function scheduleAnalysisWorkerWarmup() {
+  cancelAnalysisWorkerWarmupSchedule();
+  if (state.analysisRun || state.selectedFiles.length === 0 || !analysisWorkersSupported()) {
+    return;
+  }
+
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(warmAnalysisWorkers, { timeout: 250 });
+    analysisWorkerWarmupHandle = { kind: "idle", id };
+  } else {
+    const id = window.setTimeout(warmAnalysisWorkers, 0);
+    analysisWorkerWarmupHandle = { kind: "timeout", id };
+  }
+}
+
+function prepareAnalysisWorkerSourceDuringIdle() {
+  if (!analysisWorkersSupported()) {
+    return;
+  }
+  const prepare = () => {
+    try {
+      analysisWorkerUrl();
+    } catch (error) {
+      // Worker creation will use the existing sequential fallback if preparation fails.
+    }
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(prepare, { timeout: 1000 });
+  } else {
+    window.setTimeout(prepare, 0);
+  }
+}
+
+function takeWarmedAnalysisWorkers(count) {
+  cancelAnalysisWorkerWarmupSchedule();
+  const workers = [];
+  while (workers.length < count && warmedAnalysisWorkers.length > 0) {
+    const entry = warmedAnalysisWorkers.shift();
+    entry.worker.onmessage = null;
+    entry.worker.onerror = null;
+    workers.push(entry.worker);
+  }
+  return workers;
 }
 
 function positiveFiniteNumber(value) {
@@ -10549,9 +10669,9 @@ async function analyzeFilesSequentially(files, analysisMode, analysisConfig, pro
 function analyzeFilesWithWorkerPool(files, analysisMode, progress, run) {
   const workerPlan = workerPoolResourcePlan(analysisMode, files);
   const workerCount = workerPlan.workerCount;
-  const workers = [];
+  const workers = takeWarmedAnalysisWorkers(workerCount);
 
-  for (let i = 0; i < workerCount; i += 1) {
+  for (let i = workers.length; i < workerCount; i += 1) {
     const worker = createAnalysisWorker();
     if (!worker) {
       for (const existingWorker of workers) {
@@ -10706,6 +10826,9 @@ function analyzeFilesWithWorkerPool(files, analysisMode, progress, run) {
       records.push(record);
       worker.onmessage = (event) => {
         const message = event.data || {};
+        if (message.type === "ready") {
+          return;
+        }
         if (message.type === "result") {
           completeFrame(record, message.result, false);
         } else {
@@ -11410,6 +11533,7 @@ function onQualityThresholdChanged() {
 
 function onAnalysisModeChanged() {
   saveSettings();
+  scheduleAnalysisWorkerWarmup();
   if (state.results.length === 0) {
     setSummaryMessage(t("status.modeSelected", { mode: analysisModeLabel() }));
     return;
@@ -11463,6 +11587,9 @@ folderInput.addEventListener("change", () => {
   const { addedCount, duplicateCount } = addSelectedFolderFiles(folderInput.files);
   folderInput.value = "";
   updateFolderFileCount();
+  if (addedCount > 0) {
+    scheduleAnalysisWorkerWarmup();
+  }
   if (addedCount === 0 && duplicateCount > 0) {
     setSummaryMessage(t("status.noNewFiles"));
   } else if (state.results.length > 0) {
@@ -11475,6 +11602,7 @@ if (clearFoldersBtn) {
   clearFoldersBtn.addEventListener("click", () => {
     cancelScoreRefresh();
     cancelPreviewRefresh();
+    terminateWarmedAnalysisWorkers();
     state.selectedFiles = [];
     state.selectedFileKeys.clear();
     state.selectedFolders = [];
@@ -11816,6 +11944,8 @@ window.addEventListener("resize", () => {
   }
 });
 
+window.addEventListener("beforeunload", terminateWarmedAnalysisWorkers);
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !zoomOverlay.hidden) {
     closeZoom();
@@ -11864,6 +11994,7 @@ renderCalibrationReport();
 renderMoonIlluminationPanel();
 updateSelectAllState();
 updateSelectionControls();
+prepareAnalysisWorkerSourceDuringIdle();
 
 if (!hasOutputFolderSupport()) {
   chooseOutputBtn.disabled = true;

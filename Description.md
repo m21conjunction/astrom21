@@ -2,7 +2,7 @@
 
 Updated: 2026-10-14
 
-Current app version: **0.4.20**.
+Current app version: **0.4.21**.
 
 This document describes the current measurements, scores, and preview annotations used by Astronomy Sub Analyser. It is general documentation, not a report for one specific image.
 
@@ -163,7 +163,7 @@ When Web Workers are available, the app sends per-frame measurement work to a lo
 - The memory limit uses real local RAM in the Electron desktop wrapper, approximate browser memory when the browser exposes it, or a conservative fallback when memory is hidden by the browser.
 - The app also estimates per-worker memory pressure from the largest selected file. Expert mode reserves more memory per worker than Standard mode because it uses deeper measurement budgets.
 
-The selected count is the lowest of the pending frame count, CPU limit, and memory limit. During analysis, the summary panel shows the auto-selected worker count and whether the memory source was desktop memory, browser memory, browser heap limit, or fallback memory estimate. The completed analysis duration is retained in the final summary after workers stop, including after a normal completion or a user-initiated stop.
+The selected count is the lowest of the pending frame count, CPU limit, and memory limit. Worker source generation is prepared during idle time, and up to two workers are pre-warmed after supported folders are selected so script parsing and WASM initialisation do not normally delay the first frame. The pool still expands to the selected count when analysis starts, and all workers terminate after completion or cancellation to release image memory. During analysis, the summary panel shows the auto-selected worker count and whether the memory source was desktop memory, browser memory, browser heap limit, or fallback memory estimate. The completed analysis duration is retained in the final summary after workers stop, including after a normal completion or a user-initiated stop.
 
 ### Analysis Summary Layout
 

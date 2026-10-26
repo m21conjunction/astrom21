@@ -1,5 +1,12 @@
 # Astronomy Sub Analyser Changelog
 
+## 0.4.21 - 2026-10-26
+
+- Prepared the generated analysis-worker source during idle time instead of waiting for the Analyse click.
+- Pre-warmed up to two workers, including their WASM statistics kernels, after supported folders are selected.
+- Reused warmed workers at analysis start while still expanding to the automatically selected CPU/RAM-safe worker count.
+- Continued terminating all workers after completion or cancellation so full-resolution FITS/XISF buffers are released.
+
 ## 0.4.20 - 2026-10-14
 
 - Disabled Developer Tools and their common keyboard shortcuts in packaged production builds while retaining them during development.
